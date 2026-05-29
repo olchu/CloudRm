@@ -13,5 +13,6 @@ struct CloudeRmApp: App {
         WindowGroup {
             ContentView()
         }
+        .windowStyle(.hiddenTitleBar)
     }
 }

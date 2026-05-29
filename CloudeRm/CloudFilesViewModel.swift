@@ -323,7 +323,7 @@ final class CloudFilesViewModel {
         isEvicting = false
         errorMessage = nil
         if files.isEmpty {
-            statusMessage = "Быстрый поиск..."
+            statusMessage = "Ищем файлы в выбранной папке..."
         } else {
             statusMessage = "Обновление списка..."
         }
@@ -347,11 +347,44 @@ final class CloudFilesViewModel {
                     return
                 }
 
-                finishScan(result, generation: generation)
-            } catch is CancellationError, is CloudFileMetadataScanner.MetadataScanError {
+                if result.files.isEmpty {
+                    statusMessage = "Проверяем файлы в выбранной папке..."
+                    let fallbackResult = try await Self.scanWithFileManager(folderURL: selectedFolderURL) { [weak self] progress in
+                        Task { @MainActor [weak self] in
+                            self?.applyScanProgress(progress, generation: generation)
+                        }
+                    }
+
+                    guard !Task.isCancelled else {
+                        return
+                    }
+
+                    finishScan(fallbackResult, generation: generation)
+                } else {
+                    finishScan(result, generation: generation)
+                }
+            } catch is CancellationError, CloudFileMetadataScanner.MetadataScanError.cancelled {
                 markScanStopped(generation: generation)
             } catch {
-                failScan(error, generation: generation)
+                statusMessage = "Проверяем файлы в выбранной папке..."
+
+                do {
+                    let fallbackResult = try await Self.scanWithFileManager(folderURL: selectedFolderURL) { [weak self] progress in
+                        Task { @MainActor [weak self] in
+                            self?.applyScanProgress(progress, generation: generation)
+                        }
+                    }
+
+                    guard !Task.isCancelled else {
+                        return
+                    }
+
+                    finishScan(fallbackResult, generation: generation)
+                } catch is CancellationError {
+                    markScanStopped(generation: generation)
+                } catch {
+                    failScan(error, generation: generation)
+                }
             }
         }
     }
@@ -382,7 +415,7 @@ final class CloudFilesViewModel {
 
         scanTask = Task.detached(priority: .userInitiated) { [weak self, selectedFolderURL] in
             do {
-                let result = try CloudFileScanner.scan(folderURL: selectedFolderURL) { [weak self] progress in
+                let result = try await Self.scanWithFileManager(folderURL: selectedFolderURL) { [weak self] progress in
                     Task { @MainActor [weak self] in
                         self?.applyScanProgress(progress, generation: generation)
                     }
@@ -730,6 +763,15 @@ final class CloudFilesViewModel {
         }
 
         CloudFileCache.saveSnapshot(folderURL: selectedFolderURL, files: files)
+    }
+
+    nonisolated private static func scanWithFileManager(
+        folderURL: URL,
+        onProgress: (@Sendable (CloudFileScanner.ScanProgress) -> Void)? = nil
+    ) async throws -> CloudFileScanner.ScanResult {
+        try await Task.detached(priority: .userInitiated) {
+            try CloudFileScanner.scan(folderURL: folderURL, onProgress: onProgress)
+        }.value
     }
 
     private static let largeFolderThreshold: Int64 = 1_000_000_000

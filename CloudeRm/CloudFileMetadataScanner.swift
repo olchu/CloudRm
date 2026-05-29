@@ -31,6 +31,7 @@ final class CloudFileMetadataScanner {
     private var filesByURL: [URL: CloudFile] = [:]
     private var isCompleted = false
     private var skippedFileCount = 0
+    private var didStartSecurityScopedAccess = false
 
     init(
         folderURL: URL,
@@ -43,6 +44,8 @@ final class CloudFileMetadataScanner {
     func start() async throws -> CloudFileScanner.ScanResult {
         try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
+            didStartSecurityScopedAccess = folderURL.startAccessingSecurityScopedResource()
+
             configureQuery()
             addObservers()
 
@@ -254,6 +257,11 @@ final class CloudFileMetadataScanner {
     private func cleanup() {
         if query.isStarted {
             query.stop()
+        }
+
+        if didStartSecurityScopedAccess {
+            folderURL.stopAccessingSecurityScopedResource()
+            didStartSecurityScopedAccess = false
         }
 
         let center = NotificationCenter.default

@@ -44,6 +44,7 @@ struct ContentView: View {
     private var mainPanel: some View {
         VStack(spacing: 18) {
             topBar
+                .padding(.leading, 86)
             filtersBar
 
             if viewModel.isScanning && viewModel.files.isEmpty {
