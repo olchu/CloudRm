@@ -142,6 +142,9 @@ final class CloudFilesViewModel {
     @ObservationIgnored
     private var scanGeneration = 0
 
+    @ObservationIgnored
+    private var progressFileIDs: Set<CloudFile.ID> = []
+
     init() {
         restoreLastFolder()
     }
@@ -330,6 +333,7 @@ final class CloudFilesViewModel {
         selectedFileIDs = []
         skippedFileCount = 0
         scannedFileCount = 0
+        progressFileIDs = Set(files.map(\.id))
 
         scanTask = Task { [weak self, selectedFolderURL] in
             guard let self else {
@@ -411,6 +415,7 @@ final class CloudFilesViewModel {
         selectedFolderID = nil
         skippedFileCount = 0
         scannedFileCount = 0
+        progressFileIDs = []
         statusMessage = "Полное сканирование..."
 
         scanTask = Task.detached(priority: .userInitiated) { [weak self, selectedFolderURL] in
@@ -618,7 +623,6 @@ final class CloudFilesViewModel {
         scannedFileCount = progress.scannedFileCount
         skippedFileCount = progress.skippedFileCount
         statusMessage = "Сканирование: \(progress.scannedFileCount) файлов, найдено \(progress.candidateFileCount)"
-        ensureSelectedFolderStillExists()
     }
 
     private func finishScan(_ result: CloudFileScanner.ScanResult, generation: Int) {
@@ -629,6 +633,7 @@ final class CloudFilesViewModel {
         files = result.files
         skippedFileCount = result.skippedFileCount
         scannedFileCount = result.scannedFileCount
+        progressFileIDs = Set(result.files.map(\.id))
         ensureSelectedFolderStillExists()
         statusMessage = result.files.isEmpty ? "iCloud-файлы не найдены" : "Найдено: \(result.files.count)"
         isScanning = false
@@ -670,17 +675,8 @@ final class CloudFilesViewModel {
             return
         }
 
-        let existingIDs = Set(files.map(\.id))
-        files.append(contentsOf: newFiles.filter { !existingIDs.contains($0.id) })
-        files.sort { lhs, rhs in
-            let lhsSize = lhs.byteSize ?? -1
-            let rhsSize = rhs.byteSize ?? -1
-
-            if lhsSize != rhsSize {
-                return lhsSize > rhsSize
-            }
-
-            return lhs.relativePath.localizedStandardCompare(rhs.relativePath) == .orderedAscending
+        for file in newFiles where progressFileIDs.insert(file.id).inserted {
+            files.append(file)
         }
     }
 

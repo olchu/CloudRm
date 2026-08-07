@@ -44,6 +44,7 @@ enum CloudFileScanner {
             .fileSizeKey,
             .contentModificationDateKey
         ]
+        let resourceKeySet = Set(resourceKeys)
         var skippedFileCount = 0
         var scannedFileCount = 0
         var files: [CloudFile] = []
@@ -72,7 +73,7 @@ enum CloudFileScanner {
             try Task.checkCancellation()
 
             do {
-                let values = try fileURL.resourceValues(forKeys: Set(resourceKeys))
+                let values = try fileURL.resourceValues(forKeys: resourceKeySet)
                 guard values.isDirectory != true else {
                     continue
                 }
@@ -104,7 +105,7 @@ enum CloudFileScanner {
                 skippedFileCount += 1
             }
 
-            if scannedFileCount.isMultiple(of: 100) || candidateBatch.count >= 25 {
+            if scannedFileCount.isMultiple(of: 500) || candidateBatch.count >= 100 {
                 onProgress?(
                     ScanProgress(
                         scannedFileCount: scannedFileCount,

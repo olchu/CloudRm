@@ -73,7 +73,7 @@ final class CloudFileMetadataScanner {
         query.sortDescriptors = [
             NSSortDescriptor(key: NSMetadataItemFSSizeKey, ascending: false)
         ]
-        query.notificationBatchingInterval = 0.25
+        query.notificationBatchingInterval = 0.75
     }
 
     private func addObservers() {
@@ -84,9 +84,10 @@ final class CloudFileMetadataScanner {
                 forName: .NSMetadataQueryDidUpdate,
                 object: query,
                 queue: .main
-            ) { [weak self] _ in
+            ) { [weak self] notification in
+                let changedItems = Self.changedItems(from: notification)
                 Task { @MainActor [weak self] in
-                    self?.processCurrentResults(isFinished: false)
+                    self?.processResults(changedItems, isFinished: false)
                 }
             }
         )
@@ -98,13 +99,19 @@ final class CloudFileMetadataScanner {
                 queue: .main
             ) { [weak self] _ in
                 Task { @MainActor [weak self] in
-                    self?.processCurrentResults(isFinished: true)
+                    self?.processResults(nil, isFinished: true)
                 }
             }
         )
     }
 
-    private func processCurrentResults(isFinished: Bool) {
+    nonisolated private static func changedItems(from notification: Notification) -> [NSMetadataItem] {
+        let addedItems = notification.userInfo?[NSMetadataQueryUpdateAddedItemsKey] as? [NSMetadataItem] ?? []
+        let changedItems = notification.userInfo?[NSMetadataQueryUpdateChangedItemsKey] as? [NSMetadataItem] ?? []
+        return addedItems + changedItems
+    }
+
+    private func processResults(_ changedItems: [NSMetadataItem]?, isFinished: Bool) {
         guard !isCompleted else {
             return
         }
@@ -115,26 +122,32 @@ final class CloudFileMetadataScanner {
         }
 
         var candidateBatch: [CloudFile] = []
+        let items: [NSMetadataItem]
 
-        for index in 0..<query.resultCount {
-            guard
-                let item = query.result(at: index) as? NSMetadataItem,
-                let file = cloudFile(from: item),
-                filesByURL[file.url] == nil
-            else {
+        if let changedItems {
+            items = changedItems
+        } else {
+            items = (0..<query.resultCount).compactMap {
+                query.result(at: $0) as? NSMetadataItem
+            }
+        }
+
+        for item in items {
+            guard let file = cloudFile(from: item) else {
                 continue
             }
 
-            filesByURL[file.url] = file
-            candidateBatch.append(file)
+            let isNewFile = filesByURL.updateValue(file, forKey: file.url) == nil
+            if isNewFile {
+                candidateBatch.append(file)
+            }
         }
 
         if !candidateBatch.isEmpty || isFinished {
-            let files = sortedFiles
             onProgress(
                 CloudFileScanner.ScanProgress(
                     scannedFileCount: query.resultCount,
-                    candidateFileCount: files.count,
+                    candidateFileCount: filesByURL.count,
                     skippedFileCount: skippedFileCount,
                     candidateBatch: candidateBatch
                 )

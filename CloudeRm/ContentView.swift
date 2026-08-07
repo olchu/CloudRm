@@ -13,8 +13,7 @@ struct ContentView: View {
 
     var body: some View {
         ZStack {
-            AppPalette.windowBackground
-                .ignoresSafeArea()
+            StudioBackground()
 
             HStack(spacing: 0) {
                 mainPanel
@@ -28,6 +27,7 @@ struct ContentView: View {
             }
         }
         .preferredColorScheme(.dark)
+        .environment(\.font, .system(size: 13, design: .monospaced))
         .frame(minWidth: 900, minHeight: 680)
         .alert("Выгрузить локальные копии?", isPresented: $isConfirmingFolderEviction) {
             Button("Отмена", role: .cancel) {}
@@ -44,7 +44,6 @@ struct ContentView: View {
     private var mainPanel: some View {
         VStack(spacing: 18) {
             topBar
-                .padding(.leading, 86)
             filtersBar
 
             if viewModel.isScanning && viewModel.files.isEmpty {
@@ -67,16 +66,23 @@ struct ContentView: View {
 
     private var topBar: some View {
         HStack(spacing: 14) {
+            OlchuStudioMark()
+                .frame(width: 118, alignment: .leading)
+
+            Rectangle()
+                .fill(AppPalette.stroke)
+                .frame(width: 1, height: 28)
+
             HStack(spacing: 9) {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(AppPalette.secondaryText)
 
                 TextField("Search folders...", text: searchTextBinding)
                     .textFieldStyle(.plain)
-                    .font(.callout)
+                    .font(.system(size: 13, weight: .medium, design: .monospaced))
 
                 Text("⌘F")
-                    .font(.caption)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .foregroundStyle(AppPalette.secondaryText)
             }
             .padding(.horizontal, 12)
@@ -178,30 +184,25 @@ struct ContentView: View {
     }
 
     private var folderList: some View {
-        ScrollView {
-            LazyVStack(spacing: 8) {
-                if viewModel.isScanning {
-                    scanningBanner
-                }
-
-                ForEach(viewModel.filteredFolderSummaries) { folder in
-                    FolderCard(
-                        folder: folder,
-                        isSelected: folder.id == viewModel.selectedFolderSummary?.id,
-                        onSelect: {
-                            viewModel.selectedFolderID = folder.id
-                        },
-                        onFreeUp: {
-                            viewModel.selectedFolderID = folder.id
-                            isConfirmingFolderEviction = true
-                        },
-                        onEvictFile: { file in
-                            viewModel.evictFile(file)
-                        }
-                    )
-                }
+        VStack(spacing: 10) {
+            if viewModel.isScanning {
+                scanningBanner
             }
-            .padding(.vertical, 2)
+
+            ScrollView {
+                LazyVStack(spacing: 8) {
+                    ForEach(viewModel.filteredFolderSummaries) { folder in
+                        FolderListRow(
+                            folder: folder,
+                            isSelected: viewModel.selectedFolderSummary?.id == folder.id
+                        ) {
+                            viewModel.selectedFolderID = folder.id
+                        }
+                    }
+                }
+                .padding(.vertical, 1)
+            }
+            .scrollIndicators(.automatic)
         }
     }
 
@@ -308,10 +309,12 @@ struct ContentView: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.caption)
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .textCase(.uppercase)
+                    .tracking(0.6)
                     .foregroundStyle(AppPalette.secondaryText)
                 Text(value)
-                    .font(.headline.weight(.semibold))
+                    .font(.system(size: 15, weight: .semibold, design: .monospaced))
                     .monospacedDigit()
             }
 
@@ -374,6 +377,480 @@ struct ContentView: View {
 
         let url = rootURL.appending(path: folder.relativePath)
         NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+}
+
+private struct FolderListRow: View {
+    let folder: CloudFolderSummary
+    let isSelected: Bool
+    let onSelect: () -> Void
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 14) {
+                Image(systemName: "folder.fill")
+                    .font(.system(size: 24, weight: .medium))
+                    .foregroundStyle(isSelected ? AppPalette.accent : AppPalette.folderHighlight)
+                    .frame(width: 34)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(folder.name)
+                        .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(AppPalette.primaryText)
+                        .lineLimit(1)
+
+                    Text(folder.relativePath)
+                        .font(.system(size: 11, weight: .regular, design: .monospaced))
+                        .foregroundStyle(AppPalette.secondaryText)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                Spacer(minLength: 12)
+
+                listMetric(folder.fileCount.formatted(), label: "FILES")
+                    .frame(width: 62, alignment: .trailing)
+
+                listMetric(byteCountText(folder.localByteSize), label: "ON MAC")
+                    .frame(width: 90, alignment: .trailing)
+
+                status
+                    .frame(width: 104, alignment: .trailing)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(isSelected ? AppPalette.accent : AppPalette.secondaryText)
+                    .frame(width: 18)
+            }
+            .padding(.horizontal, 16)
+            .frame(minHeight: 68)
+            .contentShape(.rect)
+            .background(isSelected ? AppPalette.selectedCardBackground : AppPalette.cardBackground)
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(isSelected ? AppPalette.accent.opacity(0.62) : AppPalette.stroke, lineWidth: 1)
+            }
+            .clipShape(.rect(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var status: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(statusColor)
+                .frame(width: 6, height: 6)
+
+            Text(statusText)
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(statusColor)
+                .lineLimit(1)
+        }
+    }
+
+    private func listMetric(_ value: String, label: String) -> some View {
+        VStack(alignment: .trailing, spacing: 3) {
+            Text(value)
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .foregroundStyle(AppPalette.primaryText)
+                .monospacedDigit()
+                .lineLimit(1)
+
+            Text(label)
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .foregroundStyle(AppPalette.secondaryText)
+                .tracking(0.4)
+        }
+    }
+
+    private var statusText: String {
+        switch folder.downloadState {
+        case .downloaded:
+            "LOCAL"
+        case .cloudOnly:
+            "CLOUD"
+        case .partial:
+            "PARTIAL"
+        }
+    }
+
+    private var statusColor: Color {
+        switch folder.downloadState {
+        case .downloaded:
+            AppPalette.success
+        case .cloudOnly:
+            AppPalette.cloudBlue
+        case .partial:
+            AppPalette.warning
+        }
+    }
+}
+
+private struct FolderBubbleCloud: View {
+    let folders: [CloudFolderSummary]
+    let selectedFolderID: CloudFolderSummary.ID?
+    let onSelect: (CloudFolderSummary) -> Void
+
+    var body: some View {
+        GeometryReader { proxy in
+            let layout = makeLayout(for: folders, width: proxy.size.width)
+
+            ScrollView(.vertical) {
+                ZStack(alignment: .topLeading) {
+                    ForEach(layout.placements) { placement in
+                        FolderBubble(
+                            folder: placement.folder,
+                            diameter: placement.diameter,
+                            tint: placement.tint,
+                            bubbleImageName: placement.imageName,
+                            isSelected: placement.folder.id == selectedFolderID,
+                            onSelect: {
+                                onSelect(placement.folder)
+                            }
+                        )
+                        .frame(width: placement.diameter, height: placement.diameter)
+                        .position(x: placement.center.x, y: placement.center.y)
+                    }
+                }
+                .frame(width: proxy.size.width, height: max(layout.height, proxy.size.height))
+            }
+            .scrollIndicators(.hidden)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func makeLayout(for folders: [CloudFolderSummary], width: CGFloat) -> BubbleLayout {
+        guard !folders.isEmpty else {
+            return BubbleLayout(placements: [], height: 0)
+        }
+
+        let availableWidth = max(width, 560)
+        let maxSize = max(folders.map(\.cloudByteSize).max() ?? 1, 1)
+        let minDiameter: CGFloat = availableWidth < 760 ? 150 : 170
+        let maxDiameter: CGFloat = availableWidth < 760 ? 255 : 330
+        let spacing: CGFloat = 22
+        let horizontalStepFactor: CGFloat = 0.82
+        let rowStepFactor: CGFloat = 0.76
+        let rowOffsets: [CGFloat] = [0, 58, 20, 92]
+        let verticalOffsets: [CGFloat] = [0, 26, -18, 34, -10, 18]
+        let tints = AppPalette.bubbleTints
+        let imageNames = AppPalette.bubbleImageNames
+
+        var placements: [BubblePlacement] = []
+        var cursorX: CGFloat = rowOffsets[0]
+        var cursorY: CGFloat = 16
+        var rowHeight: CGFloat = 0
+        var rowIndex = 0
+        var totalHeight: CGFloat = 0
+
+        for (index, folder) in folders.enumerated() {
+            let diameter = bubbleDiameter(
+                for: folder,
+                maxSize: maxSize,
+                minDiameter: minDiameter,
+                maxDiameter: maxDiameter
+            )
+
+            if cursorX + diameter > availableWidth, cursorX > rowOffsets[rowIndex % rowOffsets.count] {
+                rowIndex += 1
+                cursorX = rowOffsets[rowIndex % rowOffsets.count]
+                cursorY += max(rowHeight * rowStepFactor, minDiameter + spacing)
+                rowHeight = 0
+            }
+
+            let verticalOffset = verticalOffsets[index % verticalOffsets.count]
+            let center = CGPoint(
+                x: cursorX + diameter / 2,
+                y: max(cursorY + diameter / 2 + verticalOffset, cursorY + diameter / 2)
+            )
+            let tint = tints[index % tints.count]
+
+            placements.append(
+                BubblePlacement(
+                    folder: folder,
+                    diameter: diameter,
+                    center: center,
+                    tint: tint,
+                    imageName: imageNames[index % imageNames.count]
+                )
+            )
+
+            cursorX += diameter * horizontalStepFactor + spacing
+            rowHeight = max(rowHeight, diameter + abs(verticalOffset))
+            totalHeight = max(totalHeight, center.y + diameter / 2 + 28)
+        }
+
+        return BubbleLayout(placements: placements, height: totalHeight)
+    }
+
+    private func bubbleDiameter(
+        for folder: CloudFolderSummary,
+        maxSize: Int64,
+        minDiameter: CGFloat,
+        maxDiameter: CGFloat
+    ) -> CGFloat {
+        guard maxSize > 0 else {
+            return minDiameter
+        }
+
+        let size = max(folder.cloudByteSize, 1)
+        let normalized = sqrt(Double(size) / Double(maxSize))
+        return minDiameter + (maxDiameter - minDiameter) * normalized
+    }
+}
+
+private struct BubbleLayout {
+    let placements: [BubblePlacement]
+    let height: CGFloat
+}
+
+private struct BubblePlacement: Identifiable {
+    var id: CloudFolderSummary.ID { folder.id }
+
+    let folder: CloudFolderSummary
+    let diameter: CGFloat
+    let center: CGPoint
+    let tint: Color
+    let imageName: String
+}
+
+private struct FolderBubble: View {
+    let folder: CloudFolderSummary
+    let diameter: CGFloat
+    let tint: Color
+    let bubbleImageName: String
+    let isSelected: Bool
+    let onSelect: () -> Void
+
+    var body: some View {
+        Button(action: onSelect) {
+            ZStack(alignment: .topTrailing) {
+                bubbleSurface
+
+                VStack(spacing: contentSpacing) {
+                    folderIcon
+
+                    VStack(spacing: 5) {
+                        Text(folder.name)
+                            .font(titleFont)
+                            .foregroundStyle(AppPalette.primaryText)
+                            .multilineTextAlignment(.center)
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.72)
+
+                        Text(primaryMetricText)
+                            .font(metricFont)
+                            .foregroundStyle(AppPalette.secondaryText)
+                            .monospacedDigit()
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.78)
+
+                        Text(itemCountText)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(AppPalette.secondaryText)
+                            .monospacedDigit()
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.78)
+                    }
+
+                    VStack(spacing: 6) {
+                        Text(statusText)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(AppPalette.secondaryText)
+                            .monospacedDigit()
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.78)
+
+                        if folder.downloadState == .partial {
+                            ProgressView(value: folder.downloadedFraction)
+                                .progressViewStyle(.linear)
+                                .tint(progressTint)
+                                .frame(width: progressWidth)
+                        }
+                    }
+                }
+                .padding(contentPadding)
+
+                Image(systemName: "star.fill")
+                    .font(.system(size: starSize, weight: .semibold))
+                    .foregroundStyle(AppPalette.favorite)
+                    .frame(width: badgeSize, height: badgeSize)
+                    .background(.ultraThinMaterial)
+                    .background(Color.white.opacity(0.42))
+                    .clipShape(Circle())
+                    .overlay(Circle().stroke(Color.white.opacity(0.7), lineWidth: 1))
+                    .offset(x: -diameter * 0.08, y: diameter * 0.08)
+                    .opacity(isSelected ? 1 : 0.82)
+            }
+            .frame(width: diameter, height: diameter)
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var bubbleSurface: some View {
+        ZStack {
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            Color.white.opacity(0.58),
+                            tint.opacity(0.18),
+                            Color.white.opacity(0.06)
+                        ],
+                        center: .topLeading,
+                        startRadius: diameter * 0.08,
+                        endRadius: diameter * 0.62
+                    )
+                )
+                .blur(radius: 0.4)
+
+            Image(bubbleImageName)
+                .resizable()
+                .scaledToFit()
+                .opacity(isSelected ? 0.86 : 0.72)
+                .saturation(1.02)
+                .allowsHitTesting(false)
+
+            Circle()
+                .stroke(Color.white.opacity(0.34), lineWidth: diameter * 0.012)
+                .blur(radius: 1.2)
+                .padding(diameter * 0.05)
+        }
+        .clipShape(Circle())
+        .overlay(
+            Circle()
+                .stroke(
+                    isSelected ? AppPalette.accent.opacity(0.52) : Color.white.opacity(0.18),
+                    lineWidth: isSelected ? 2.5 : 1
+                )
+        )
+        .shadow(color: tint.opacity(isSelected ? 0.38 : 0.18), radius: isSelected ? 26 : 16, y: 12)
+    }
+
+    private var folderIcon: some View {
+        ZStack(alignment: .bottomTrailing) {
+            Image(systemName: "folder.fill")
+                .font(.system(size: folderIconSize, weight: .regular))
+                .symbolRenderingMode(.palette)
+                .foregroundStyle(AppPalette.folderHighlight, AppPalette.folderBase)
+
+            Image(systemName: providerBadgeIcon)
+                .font(.system(size: badgeIconSize, weight: .semibold))
+                .foregroundStyle(AppPalette.cloudBlue)
+                .frame(width: iconBadgeSize, height: iconBadgeSize)
+                .background(.white.opacity(0.92))
+                .clipShape(Circle())
+                .shadow(color: AppPalette.cloudBlue.opacity(0.18), radius: 8, y: 4)
+                .offset(x: diameter * 0.04, y: diameter * 0.04)
+        }
+    }
+
+    private var providerBadgeIcon: String {
+        switch folder.downloadState {
+        case .downloaded:
+            "checkmark.icloud"
+        case .cloudOnly:
+            "icloud"
+        case .partial:
+            "icloud.and.arrow.down"
+        }
+    }
+
+    private var progressTint: Color {
+        switch folder.downloadState {
+        case .downloaded:
+            AppPalette.success
+        case .cloudOnly:
+            AppPalette.cloudBlue
+        case .partial:
+            AppPalette.warning
+        }
+    }
+
+    private var primaryMetricText: String {
+        if folder.localByteSize > 0 {
+            return "Освободить \(byteCountText(folder.localByteSize))"
+        }
+
+        return "В iCloud \(byteCountText(folder.cloudByteSize))"
+    }
+
+    private var itemCountText: String {
+        let files = localizedCount(folder.fileCount, one: "файл", few: "файла", many: "файлов")
+        guard folder.folderCount > 0 else {
+            return files
+        }
+
+        let folders = localizedCount(folder.folderCount, one: "папка", few: "папки", many: "папок")
+        return "\(files) • \(folders)"
+    }
+
+    private var statusText: String {
+        switch folder.downloadState {
+        case .downloaded:
+            "На Mac"
+        case .cloudOnly:
+            "Только в iCloud"
+        case .partial:
+            "\(folder.downloadedFraction.formatted(.percent.precision(.fractionLength(0)))) на Mac"
+        }
+    }
+
+    private func localizedCount(_ value: Int, one: String, few: String, many: String) -> String {
+        let mod10 = value % 10
+        let mod100 = value % 100
+        let word: String
+
+        if mod10 == 1 && mod100 != 11 {
+            word = one
+        } else if (2...4).contains(mod10) && !(12...14).contains(mod100) {
+            word = few
+        } else {
+            word = many
+        }
+
+        return "\(value) \(word)"
+    }
+
+    private var titleFont: Font {
+        diameter > 250 ? .title3.weight(.bold) : .headline.weight(.bold)
+    }
+
+    private var metricFont: Font {
+        diameter > 220 ? .callout : .caption
+    }
+
+    private var contentSpacing: CGFloat {
+        diameter > 230 ? 14 : 9
+    }
+
+    private var contentPadding: CGFloat {
+        diameter * 0.14
+    }
+
+    private var progressWidth: CGFloat {
+        min(diameter * 0.45, 128)
+    }
+
+    private var folderIconSize: CGFloat {
+        min(diameter * 0.30, 82)
+    }
+
+    private var iconBadgeSize: CGFloat {
+        min(diameter * 0.16, 42)
+    }
+
+    private var badgeIconSize: CGFloat {
+        min(diameter * 0.085, 22)
+    }
+
+    private var badgeSize: CGFloat {
+        min(diameter * 0.14, 44)
+    }
+
+    private var starSize: CGFloat {
+        min(diameter * 0.07, 20)
     }
 }
 
@@ -457,6 +934,7 @@ private struct FolderCard: View {
             }
         }
         .background(isSelected ? AppPalette.selectedCardBackground : AppPalette.cardBackground)
+        .background(.regularMaterial)
         .overlay(
             RoundedRectangle(cornerRadius: 8)
                 .stroke(isSelected ? AppPalette.accent.opacity(0.55) : AppPalette.stroke, lineWidth: 1)
@@ -627,6 +1105,7 @@ private struct FolderFileRow: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
+        .background(.ultraThinMaterial)
         .background(AppPalette.controlBackground)
         .clipShape(.rect(cornerRadius: 8))
     }
@@ -740,6 +1219,7 @@ private struct FolderDetailsPanel: View {
                 .monospacedDigit()
         }
         .padding(14)
+        .background(.ultraThinMaterial)
         .background(AppPalette.panelBackground)
         .overlay(
             RoundedRectangle(cornerRadius: 8)
@@ -787,19 +1267,21 @@ private struct FolderDetailsPanel: View {
 private struct PrimaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.callout.weight(.semibold))
+            .font(.system(size: 12, weight: .bold, design: .monospaced))
+            .textCase(.uppercase)
             .foregroundStyle(.white)
             .padding(.horizontal, 14)
             .frame(height: 38)
-            .background(AppPalette.accent.opacity(configuration.isPressed ? 0.72 : 1))
+            .background(AppPalette.accent.opacity(configuration.isPressed ? 0.76 : 1))
             .clipShape(.rect(cornerRadius: 8))
+            .shadow(color: AppPalette.accent.opacity(0.20), radius: 12, y: 5)
     }
 }
 
 private struct SecondaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.callout)
+            .font(.system(size: 12, weight: .semibold, design: .monospaced))
             .foregroundStyle(AppPalette.primaryText)
             .padding(.horizontal, 12)
             .frame(height: 36)
@@ -821,31 +1303,124 @@ private struct IconButtonStyle: ButtonStyle {
     }
 }
 
-private enum AppPalette {
-    static let primaryText = Color(red: 0.96, green: 0.97, blue: 1)
-    static let secondaryText = Color(red: 0.66, green: 0.68, blue: 0.76)
-    static let stroke = Color.white.opacity(0.08)
-    static let accent = Color(red: 0.22, green: 0.42, blue: 0.96)
-    static let success = Color(red: 0.42, green: 0.88, blue: 0.38)
-    static let warning = Color(red: 0.95, green: 0.68, blue: 0.12)
-    static let danger = Color(red: 1, green: 0.36, blue: 0.32)
-    static let favorite = Color(red: 1, green: 0.79, blue: 0.18)
-    static let cloudBlue = Color(red: 0.26, green: 0.68, blue: 1)
-    static let folderBase = Color(red: 0.17, green: 0.64, blue: 0.88)
-    static let folderHighlight = Color(red: 0.37, green: 0.82, blue: 1)
-    static let controlBackground = Color.white.opacity(0.055)
-    static let panelBackground = Color.white.opacity(0.055)
-    static let cardBackground = Color.white.opacity(0.055)
-    static let selectedCardBackground = Color.white.opacity(0.085)
-    static let contentBackground = Color.black.opacity(0.08)
-    static let detailsBackground = Color.black.opacity(0.14)
+private struct OlchuStudioMark: View {
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 6) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text("> OLCHU_")
+                    .font(.system(size: 8, weight: .light, design: .monospaced))
+                    .foregroundStyle(AppPalette.secondaryText)
+                    .tracking(0.8)
 
-    static var windowBackground: LinearGradient {
+                HStack(spacing: 3) {
+                    Text("STUDI")
+                        .font(.system(size: 13, weight: .black))
+                        .tracking(0.5)
+
+                    Circle()
+                        .fill(AppPalette.accent)
+                        .frame(width: 16, height: 16)
+                        .shadow(color: AppPalette.accent.opacity(0.42), radius: 7)
+                }
+            }
+
+            Text("CLOUD")
+                .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                .foregroundStyle(AppPalette.secondaryText)
+                .padding(.bottom, 2)
+        }
+        .foregroundStyle(AppPalette.primaryText)
+        .fixedSize()
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Olchu Studio Cloud")
+    }
+}
+
+private struct StudioBackground: View {
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    Color(red: 0.075, green: 0.075, blue: 0.070),
+                    Color(red: 0.025, green: 0.025, blue: 0.023)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            RadialGradient(
+                colors: [
+                    AppPalette.accent.opacity(0.10),
+                    .clear
+                ],
+                center: .topTrailing,
+                startRadius: 0,
+                endRadius: 520
+            )
+
+            StudioGrid()
+                .opacity(0.22)
+        }
+        .ignoresSafeArea()
+    }
+}
+
+private struct StudioGrid: View {
+    var body: some View {
+        Canvas { context, size in
+            var path = Path()
+            let spacing: CGFloat = 48
+
+            for x in stride(from: CGFloat.zero, through: size.width, by: spacing) {
+                path.move(to: CGPoint(x: x, y: 0))
+                path.addLine(to: CGPoint(x: x, y: size.height))
+            }
+
+            for y in stride(from: CGFloat.zero, through: size.height, by: spacing) {
+                path.move(to: CGPoint(x: 0, y: y))
+                path.addLine(to: CGPoint(x: size.width, y: y))
+            }
+
+            context.stroke(path, with: .color(.white.opacity(0.035)), lineWidth: 0.5)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+private enum AppPalette {
+    static let primaryText = Color.white.opacity(0.92)
+    static let secondaryText = Color.white.opacity(0.48)
+    static let stroke = Color.white.opacity(0.11)
+    static let accent = Color(red: 1.00, green: 0.22, blue: 0.24)
+    static let success = Color(red: 0.25, green: 0.82, blue: 0.48)
+    static let warning = Color(red: 1.00, green: 0.68, blue: 0.20)
+    static let danger = accent
+    static let favorite = warning
+    static let cloudBlue = Color(red: 0.32, green: 0.64, blue: 1.00)
+    static let folderBase = Color(red: 0.22, green: 0.30, blue: 0.42)
+    static let folderHighlight = Color(red: 0.46, green: 0.70, blue: 1.00)
+    static let controlBackground = Color.white.opacity(0.055)
+    static let panelBackground = Color.black.opacity(0.30)
+    static let cardBackground = Color.white.opacity(0.045)
+    static let selectedCardBackground = accent.opacity(0.11)
+    static let contentBackground = Color.black.opacity(0.12)
+    static let detailsBackground = Color.black.opacity(0.24)
+    static let bubbleTints = [
+        accent,
+        Color(red: 0.36, green: 0.62, blue: 1),
+        Color(red: 0.54, green: 0.38, blue: 0.92),
+        Color(red: 0.94, green: 0.55, blue: 0.20),
+        Color(red: 0.20, green: 0.68, blue: 0.58),
+        Color(red: 0.88, green: 0.30, blue: 0.52)
+    ]
+    static let bubbleImageNames = ["BubbleReference"]
+
+    static var windowOverlay: LinearGradient {
         LinearGradient(
             colors: [
-                Color(red: 0.15, green: 0.13, blue: 0.24),
-                Color(red: 0.07, green: 0.10, blue: 0.17),
-                Color(red: 0.12, green: 0.14, blue: 0.22)
+                Color.white.opacity(0.025),
+                Color.clear,
+                Color.black.opacity(0.12)
             ],
             startPoint: .topLeading,
             endPoint: .bottomTrailing

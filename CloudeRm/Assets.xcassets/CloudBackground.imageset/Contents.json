@@ -1,0 +1,12 @@
+{
+  "images" : [
+    {
+      "filename" : "cloud-background.png",
+      "idiom" : "universal"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}
