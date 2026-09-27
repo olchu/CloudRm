@@ -21,7 +21,7 @@ enum CloudFileScanner {
 
     struct ScanResult: Sendable {
         let files: [CloudFile]
-        let folderTotals: [String: CloudFolderTotal]
+        let directoryTotals: [String: CloudFolderTotal]
         let skippedFileCount: Int
         let scannedFileCount: Int
         /// Local files inside iCloud Drive that iCloud does not sync.
@@ -54,7 +54,7 @@ enum CloudFileScanner {
         var skippedFileCount = 0
         var scannedFileCount = 0
         var files: [CloudFile] = []
-        var folderTotals: [String: CloudFolderTotal] = [:]
+        var directoryTotals: [String: CloudFolderTotal] = [:]
         var candidateBatch: [CloudFile] = []
         let folderPath = folderURL.standardizedFileURL.path(percentEncoded: false)
         let relativePathPrefix = folderPath.hasSuffix("/") ? folderPath : folderPath + "/"
@@ -84,7 +84,7 @@ enum CloudFileScanner {
             do {
                 let values = try fileURL.resourceValues(forKeys: resourceKeySet)
                 guard values.isDirectory != true else {
-                    folderTotals.addSubfolder(relativePath: relativePath(for: fileURL, prefix: relativePathPrefix))
+                    directoryTotals.addSubfolder(relativePath: relativePath(for: fileURL, prefix: relativePathPrefix))
                     continue
                 }
 
@@ -95,7 +95,7 @@ enum CloudFileScanner {
                 }
 
                 let downloadStatus = downloadStatus(from: values)
-                folderTotals.addFile(
+                directoryTotals.addFile(
                     relativePath: relativePath(for: fileURL, prefix: relativePathPrefix),
                     byteSize: Int64(values.fileSize ?? 0),
                     isLocal: downloadStatus.isStoredLocally,
@@ -146,7 +146,7 @@ enum CloudFileScanner {
 
         return ScanResult(
             files: files.sorted(by: sortByLargestSizeFirst),
-            folderTotals: folderTotals,
+            directoryTotals: directoryTotals,
             skippedFileCount: skippedFileCount,
             scannedFileCount: scannedFileCount
         )

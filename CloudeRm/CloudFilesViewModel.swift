@@ -114,7 +114,16 @@ final class CloudFilesViewModel {
     var selectedFolderURL: URL?
     private(set) var files: [CloudFile] = []
     var selectedFileIDs: Set<CloudFile.ID> = []
-    var selectedFolderID: CloudFolderSummary.ID?
+    /// Folder whose contents the list shows; nil is the scanned root.
+    var currentFolderPath: String? {
+        didSet {
+            guard currentFolderPath != oldValue else {
+                return
+            }
+
+            rebuildDerivedState()
+        }
+    }
     var searchText = "" {
         didSet {
             rebuildDerivedState()
@@ -138,12 +147,17 @@ final class CloudFilesViewModel {
     var scannedFileCount = 0
     private(set) var folderSummaries: [CloudFolderSummary] = []
     private(set) var filteredFolderSummaries: [CloudFolderSummary] = []
+    private(set) var currentFolder: CloudFolderSummary?
+    /// Local files directly inside the current folder.
+    private(set) var levelFiles: [CloudFile] = []
+    private(set) var levelCloudOnlyFileCount = 0
+    private(set) var levelCloudOnlyByteSize: Int64 = 0
     private(set) var totalKnownByteSize: Int64 = 0
     private(set) var totalCloudByteSize: Int64 = 0
     private(set) var totalCloudOnlyByteSize: Int64 = 0
 
     @ObservationIgnored
-    private var folderTotals: [String: CloudFolderTotal] = [:]
+    private var directoryTotals: [String: CloudFolderTotal] = [:]
 
     @ObservationIgnored
     private var scanTask: Task<Void, Never>?
@@ -178,12 +192,40 @@ final class CloudFilesViewModel {
         selectedFolderURL?.path(percentEncoded: false) ?? "Папка не выбрана"
     }
 
-    var selectedFolderSummary: CloudFolderSummary? {
-        guard let selectedFolderID else {
-            return nil
+    var isCurrentLevelEmpty: Bool {
+        filteredFolderSummaries.isEmpty && levelFiles.isEmpty
+    }
+
+    /// Breadcrumb for the current folder: (title, path) from the top down.
+    var currentFolderTrail: [(title: String, path: String)] {
+        guard let currentFolderPath else {
+            return []
         }
 
-        return filteredFolderSummaries.first { $0.id == selectedFolderID }
+        var trail: [(title: String, path: String)] = []
+        var path = ""
+        for component in currentFolderPath.split(separator: "/") {
+            path = path.isEmpty ? String(component) : path + "/" + component
+            trail.append((String(component), path))
+        }
+        return trail
+    }
+
+    func openFolder(_ path: String) {
+        currentFolderPath = path
+    }
+
+    func openParentFolder() {
+        guard let currentFolderPath, let slash = currentFolderPath.lastIndex(of: "/") else {
+            self.currentFolderPath = nil
+            return
+        }
+
+        self.currentFolderPath = String(currentFolderPath[..<slash])
+    }
+
+    func openRootFolder() {
+        currentFolderPath = nil
     }
 
     var downloadedFolderCount: Int {
@@ -234,8 +276,8 @@ final class CloudFilesViewModel {
         selectedFiles.count == 1 && selectedFiles.first?.downloadStatus.isStoredLocally == true && !isScanning && !isEvicting
     }
 
-    var canEvictSelectedFolder: Bool {
-        selectedFolderSummary?.canFreeUpSpace == true && !isScanning && !isEvicting
+    var canEvictCurrentFolder: Bool {
+        currentFolder?.canFreeUpSpace == true && !isScanning && !isEvicting
     }
 
     func chooseFolder() {
@@ -268,10 +310,10 @@ final class CloudFilesViewModel {
         } catch {
             selectedFolderURL = nil
             files = []
-            folderTotals = [:]
+            directoryTotals = [:]
             resetDerivedState()
             selectedFileIDs = []
-            selectedFolderID = nil
+            currentFolderPath = nil
             errorMessage = error.localizedDescription
             isEvicting = false
             skippedFileCount = 0
@@ -286,10 +328,10 @@ final class CloudFilesViewModel {
 
         selectedFolderURL = folderURL
         files = []
-        folderTotals = [:]
+        directoryTotals = [:]
         resetDerivedState()
         selectedFileIDs = []
-        selectedFolderID = nil
+        currentFolderPath = nil
         errorMessage = nil
         isEvicting = false
         skippedFileCount = 0
@@ -357,10 +399,10 @@ final class CloudFilesViewModel {
         isEvicting = false
         errorMessage = nil
         files = []
-        folderTotals = [:]
+        directoryTotals = [:]
         resetDerivedState()
         selectedFileIDs = []
-        selectedFolderID = nil
+        currentFolderPath = nil
         skippedFileCount = 0
         scannedFileCount = 0
         progressFileIDs = []
@@ -446,8 +488,8 @@ final class CloudFilesViewModel {
         }
     }
 
-    func evictSelectedFolderLocalCopies() {
-        guard canEvictSelectedFolder, let folder = selectedFolderSummary else {
+    func evictCurrentFolderLocalCopies() {
+        guard canEvictCurrentFolder, let folder = currentFolder else {
             return
         }
 
@@ -540,11 +582,9 @@ final class CloudFilesViewModel {
     /// to the folder's cloud-only total.
     private func recordEviction(of evictedFiles: [CloudFile]) {
         for file in evictedFiles {
-            guard let key = CloudFolderTotal.key(forRelativePath: file.relativePath) else {
-                continue
+            for path in CloudFolderTotal.ancestorPaths(of: file.relativePath) {
+                directoryTotals[path]?.cloudOnlyByteSize += file.byteSize ?? file.localByteSize
             }
-
-            folderTotals[key]?.cloudOnlyByteSize += file.byteSize ?? file.localByteSize
         }
     }
 
@@ -586,7 +626,7 @@ final class CloudFilesViewModel {
             }
 
             self?.files = snapshot.files.map(\.cloudFile)
-            self?.folderTotals = snapshot.folderTotals ?? [:]
+            self?.directoryTotals = snapshot.directoryTotals ?? [:]
             self?.selectedFileIDs = []
             self?.progressFileIDs = Set(snapshot.files.map(\.url))
             self?.rebuildDerivedState()
@@ -611,7 +651,7 @@ final class CloudFilesViewModel {
         }
 
         files = result.files
-        folderTotals = result.folderTotals
+        directoryTotals = result.directoryTotals
         rebuildDerivedState()
         skippedFileCount = result.skippedFileCount
         scannedFileCount = result.scannedFileCount
@@ -632,10 +672,10 @@ final class CloudFilesViewModel {
         }
 
         files = []
-        folderTotals = [:]
+        directoryTotals = [:]
         resetDerivedState()
         selectedFileIDs = []
-        selectedFolderID = nil
+        currentFolderPath = nil
         skippedFileCount = 0
         scannedFileCount = 0
         errorMessage = error.localizedDescription
@@ -661,10 +701,10 @@ final class CloudFilesViewModel {
         }
 
         files = []
-        folderTotals = [:]
+        directoryTotals = [:]
         resetDerivedState()
         selectedFileIDs = []
-        selectedFolderID = nil
+        currentFolderPath = nil
         skippedFileCount = 0
         errorMessage = error.localizedDescription
         statusMessage = "Не удалось просканировать папку"
@@ -686,13 +726,10 @@ final class CloudFilesViewModel {
         rebuildDerivedState()
     }
 
-    private func ensureSelectedFolderStillExists() {
-        guard let selectedFolderID else {
-            return
-        }
-
-        if !filteredFolderSummaries.contains(where: { $0.id == selectedFolderID }) {
-            self.selectedFolderID = nil
+    /// A rescan or eviction can remove the open folder; fall back to the root.
+    private func ensureCurrentFolderStillExists() {
+        if currentFolderPath != nil, currentFolder == nil {
+            currentFolderPath = nil
         }
     }
 
@@ -701,7 +738,8 @@ final class CloudFilesViewModel {
         derivedStateRevision += 1
         let revision = derivedStateRevision
         let filesSnapshot = files
-        let totalsSnapshot = folderTotals
+        let totalsSnapshot = directoryTotals
+        let folderPath = currentFolderPath
         let filter = folderFilter
         let sort = folderSort
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -714,7 +752,8 @@ final class CloudFilesViewModel {
 
             let state = Self.makeDerivedState(
                 files: filesSnapshot,
-                folderTotals: totalsSnapshot,
+                directoryTotals: totalsSnapshot,
+                currentFolderPath: folderPath,
                 filter: filter,
                 sort: sort,
                 searchQuery: query
@@ -735,10 +774,14 @@ final class CloudFilesViewModel {
 
         folderSummaries = state.folderSummaries
         filteredFolderSummaries = state.filteredFolderSummaries
+        currentFolder = state.currentFolder
+        levelFiles = state.levelFiles
+        levelCloudOnlyFileCount = state.levelCloudOnlyFileCount
+        levelCloudOnlyByteSize = state.levelCloudOnlyByteSize
         totalKnownByteSize = state.totalKnownByteSize
         totalCloudByteSize = state.totalCloudByteSize
         totalCloudOnlyByteSize = state.totalCloudOnlyByteSize
-        ensureSelectedFolderStillExists()
+        ensureCurrentFolderStillExists()
         derivedStateTask = nil
     }
 
@@ -748,6 +791,10 @@ final class CloudFilesViewModel {
         derivedStateRevision += 1
         folderSummaries = []
         filteredFolderSummaries = []
+        currentFolder = nil
+        levelFiles = []
+        levelCloudOnlyFileCount = 0
+        levelCloudOnlyByteSize = 0
         totalKnownByteSize = 0
         totalCloudByteSize = 0
         totalCloudOnlyByteSize = 0
@@ -755,72 +802,105 @@ final class CloudFilesViewModel {
 
     nonisolated private static func makeDerivedState(
         files: [CloudFile],
-        folderTotals: [String: CloudFolderTotal],
+        directoryTotals: [String: CloudFolderTotal],
+        currentFolderPath: String?,
         filter: CloudFolderFilter,
         sort: CloudFolderSort,
         searchQuery: String
     ) -> DerivedState {
-        let groupedFiles = Dictionary(grouping: files, by: folderKey(for:))
-        // Folders with no local files are known only from the scan totals.
-        let folderKeys = Set(groupedFiles.keys).union(folderTotals.keys)
+        let prefix = currentFolderPath.map { $0 + "/" } ?? ""
         var totalKnownByteSize: Int64 = 0
-        var totalCloudByteSize: Int64 = 0
-        var totalCloudOnlyByteSize: Int64 = 0
-        var summaries: [CloudFolderSummary] = []
-        summaries.reserveCapacity(folderKeys.count)
+        var currentFolderFiles: [CloudFile] = []
+        var filesByChildFolder: [String: [CloudFile]] = [:]
+        var levelFiles: [CloudFile] = []
 
-        for key in folderKeys {
-            let total = folderTotals[key]
-            let sortedFiles = (groupedFiles[key] ?? []).sorted {
-                $0.relativePath.localizedStandardCompare($1.relativePath) == .orderedAscending
+        for file in files {
+            if file.downloadStatus.isStoredLocally {
+                totalKnownByteSize += file.localByteSize
             }
-            let localByteSize = sortedFiles.reduce(Int64(0)) { total, file in
-                total + (file.downloadStatus.isStoredLocally ? file.localByteSize : 0)
+
+            guard file.relativePath.hasPrefix(prefix) else {
+                continue
             }
-            let cloudByteSize = total?.byteSize ?? sortedFiles.reduce(Int64(0)) { total, file in
-                total + (file.byteSize ?? 0)
+
+            currentFolderFiles.append(file)
+            let remainder = file.relativePath.dropFirst(prefix.count)
+            if let slash = remainder.firstIndex(of: "/") {
+                filesByChildFolder[prefix + remainder[..<slash], default: []].append(file)
+            } else {
+                levelFiles.append(file)
             }
-            let folderCount = total?.folderCount ?? Set(
-                sortedFiles.compactMap { file -> Substring? in
-                    guard let slashIndex = file.relativePath.lastIndex(of: "/") else {
-                        return nil
-                    }
-
-                    return file.relativePath[..<slashIndex]
-                }
-            ).count
-
-            let lastModified = (sortedFiles.compactMap(\.modificationDate) + [total?.lastModified].compactMap { $0 }).max()
-
-            totalKnownByteSize += localByteSize
-            totalCloudByteSize += max(cloudByteSize, localByteSize)
-            totalCloudOnlyByteSize += total?.cloudOnlyByteSize ?? 0
-            summaries.append(
-                CloudFolderSummary(
-                    id: key,
-                    name: folderName(for: key, files: sortedFiles, isRootFile: total?.isRootFile == true),
-                    relativePath: key,
-                    files: sortedFiles,
-                    fileCount: max(total?.fileCount ?? 0, sortedFiles.count),
-                    folderCount: folderCount,
-                    localByteSize: localByteSize,
-                    cloudByteSize: max(cloudByteSize, localByteSize),
-                    lastModified: lastModified
-                )
-            )
         }
 
-        summaries.sort { sortFolderSummaries($0, $1, by: sort) }
+        // Folders with no local files are known only from the scan totals.
+        var childPaths = Set(filesByChildFolder.keys)
+        for path in directoryTotals.keys where !path.isEmpty && path.hasPrefix(prefix) {
+            if !path.dropFirst(prefix.count).contains("/") {
+                childPaths.insert(path)
+            }
+        }
+
+        let summaries = childPaths
+            .map { folderSummary(path: $0, files: filesByChildFolder[$0] ?? [], total: directoryTotals[$0]) }
+            .sorted { sortFolderSummaries($0, $1, by: sort) }
         let filteredSummaries = summaries.filter {
             matches($0, filter: filter) && matches($0, searchQuery: searchQuery)
         }
 
+        let showsFiles = filter == .all || filter == .downloaded
+        let filteredLevelFiles = !showsFiles ? [] : levelFiles
+            .filter { searchQuery.isEmpty || $0.displayName.localizedCaseInsensitiveContains(searchQuery) }
+            .sorted { $0.localByteSize > $1.localByteSize }
+
+        // Files directly in this folder that are only in iCloud: the folder
+        // total minus its subfolders' totals minus the local files.
+        let levelTotal = directoryTotals[currentFolderPath ?? ""]
+        let childTotals = childPaths.compactMap { directoryTotals[$0] }
+        let levelFileCount = (levelTotal?.fileCount ?? 0) - childTotals.reduce(0) { $0 + $1.fileCount }
+        let levelCloudOnlyByteSize = (levelTotal?.cloudOnlyByteSize ?? 0) - childTotals.reduce(0) { $0 + $1.cloudOnlyByteSize }
+
+        let rootTotal = directoryTotals[""]
+        let fallbackCloudByteSize = files.reduce(Int64(0)) { $0 + ($1.byteSize ?? 0) }
+
         return DerivedState(
             folderSummaries: summaries,
             filteredFolderSummaries: filteredSummaries,
+            currentFolder: currentFolderPath.flatMap { path in
+                currentFolderFiles.isEmpty && directoryTotals[path] == nil
+                    ? nil
+                    : folderSummary(path: path, files: currentFolderFiles, total: directoryTotals[path])
+            },
+            levelFiles: filteredLevelFiles,
+            levelCloudOnlyFileCount: max(0, levelFileCount - levelFiles.count),
+            levelCloudOnlyByteSize: max(0, levelCloudOnlyByteSize),
             totalKnownByteSize: totalKnownByteSize,
-            totalCloudByteSize: totalCloudByteSize,
-            totalCloudOnlyByteSize: totalCloudOnlyByteSize
+            totalCloudByteSize: max(rootTotal?.byteSize ?? fallbackCloudByteSize, totalKnownByteSize),
+            totalCloudOnlyByteSize: rootTotal?.cloudOnlyByteSize ?? 0
+        )
+    }
+
+    /// `files` are the local files anywhere inside the folder.
+    nonisolated private static func folderSummary(
+        path: String,
+        files: [CloudFile],
+        total: CloudFolderTotal?
+    ) -> CloudFolderSummary {
+        let localByteSize = files.reduce(Int64(0)) { sum, file in
+            sum + (file.downloadStatus.isStoredLocally ? file.localByteSize : 0)
+        }
+        let cloudByteSize = total?.byteSize ?? files.reduce(Int64(0)) { $0 + ($1.byteSize ?? 0) }
+        let lastModified = (files.compactMap(\.modificationDate) + [total?.lastModified].compactMap { $0 }).max()
+
+        return CloudFolderSummary(
+            id: path,
+            name: path.split(separator: "/").last.map(String.init) ?? path,
+            relativePath: path,
+            files: files,
+            fileCount: max(total?.fileCount ?? 0, files.count),
+            folderCount: total?.folderCount ?? 0,
+            localByteSize: localByteSize,
+            cloudByteSize: max(cloudByteSize, localByteSize),
+            lastModified: lastModified
         )
     }
 
@@ -873,31 +953,19 @@ final class CloudFilesViewModel {
         return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
     }
 
-    nonisolated private static func folderKey(for file: CloudFile) -> String {
-        CloudFolderTotal.key(forRelativePath: file.relativePath) ?? file.displayName
-    }
-
-    nonisolated private static func folderName(for key: String, files: [CloudFile], isRootFile: Bool) -> String {
-        if isRootFile || (files.count == 1 && files.first?.relativePath.contains("/") == false) {
-            return "Root Files"
-        }
-
-        return key
-    }
-
     private func saveCurrentSnapshot() {
         guard let selectedFolderURL else {
             return
         }
 
         let filesSnapshot = files
-        let totalsSnapshot = folderTotals
+        let totalsSnapshot = directoryTotals
         snapshotSaveTask?.cancel()
         snapshotSaveTask = Task {
             await CloudFileCacheStore.shared.saveSnapshot(
                 folderURL: selectedFolderURL,
                 files: filesSnapshot,
-                folderTotals: totalsSnapshot
+                directoryTotals: totalsSnapshot
             )
         }
     }
@@ -916,6 +984,10 @@ final class CloudFilesViewModel {
     nonisolated private struct DerivedState: Sendable {
         let folderSummaries: [CloudFolderSummary]
         let filteredFolderSummaries: [CloudFolderSummary]
+        let currentFolder: CloudFolderSummary?
+        let levelFiles: [CloudFile]
+        let levelCloudOnlyFileCount: Int
+        let levelCloudOnlyByteSize: Int64
         let totalKnownByteSize: Int64
         let totalCloudByteSize: Int64
         let totalCloudOnlyByteSize: Int64

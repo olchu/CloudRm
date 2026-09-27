@@ -46,18 +46,25 @@ nonisolated struct CloudFile: Identifiable, Hashable, Sendable {
     }
 }
 
-/// iCloud totals for one top-level folder, including files that live only in
-/// iCloud and therefore never appear in the scanned file list.
+/// iCloud totals for one directory and everything below it, including files
+/// that live only in iCloud and therefore never appear in the scanned file
+/// list. Keyed by the directory's relative path; "" is the scanned root.
 nonisolated struct CloudFolderTotal: Codable, Hashable, Sendable {
     var byteSize: Int64 = 0
     var cloudOnlyByteSize: Int64 = 0
     var fileCount = 0
     var folderCount = 0
     var lastModified: Date?
-    var isRootFile = false
 
-    nonisolated static func key(forRelativePath relativePath: String) -> String? {
-        relativePath.split(separator: "/", maxSplits: 1).first.map(String.init)
+    /// "A/B/file" → ["", "A", "A/B"]: every directory containing the item.
+    nonisolated static func ancestorPaths(of relativePath: String) -> [String] {
+        var paths = [""]
+        var index = relativePath.startIndex
+        while let slash = relativePath[index...].firstIndex(of: "/") {
+            paths.append(String(relativePath[..<slash]))
+            index = relativePath.index(after: slash)
+        }
+        return paths
     }
 
     nonisolated mutating func addFile(byteSize: Int64, isLocal: Bool, modificationDate: Date?) {
@@ -79,28 +86,25 @@ nonisolated struct CloudFolderTotal: Codable, Hashable, Sendable {
         if let otherDate = other.lastModified, otherDate > (lastModified ?? .distantPast) {
             lastModified = otherDate
         }
-        isRootFile = isRootFile || other.isRootFile
     }
 }
 
 extension [String: CloudFolderTotal] {
     nonisolated mutating func addFile(relativePath: String, byteSize: Int64, isLocal: Bool, modificationDate: Date?) {
-        guard let key = CloudFolderTotal.key(forRelativePath: relativePath) else {
-            return
-        }
-
-        self[key, default: CloudFolderTotal()].addFile(byteSize: byteSize, isLocal: isLocal, modificationDate: modificationDate)
-        if !relativePath.contains("/") {
-            self[key]?.isRootFile = true
+        for path in CloudFolderTotal.ancestorPaths(of: relativePath) {
+            self[path, default: CloudFolderTotal()].addFile(byteSize: byteSize, isLocal: isLocal, modificationDate: modificationDate)
         }
     }
 
-    nonisolated mutating func addSubfolder(relativePath: String) {
-        guard relativePath.contains("/"), let key = CloudFolderTotal.key(forRelativePath: relativePath) else {
-            return
+    /// Counts the folder in its ancestors. `isListed` is false for a dataless
+    /// folder: its contents are unknown, so it gets no entry of its own.
+    nonisolated mutating func addSubfolder(relativePath: String, isListed: Bool = true) {
+        for path in CloudFolderTotal.ancestorPaths(of: relativePath) {
+            self[path, default: CloudFolderTotal()].folderCount += 1
         }
-
-        self[key, default: CloudFolderTotal()].folderCount += 1
+        if isListed, self[relativePath] == nil {
+            self[relativePath] = CloudFolderTotal()
+        }
     }
 
     nonisolated mutating func merge(_ other: [String: CloudFolderTotal]) {

@@ -143,7 +143,7 @@ nonisolated enum CloudFileDiskScanner {
                     // A dataless directory has nothing on disk; reading it would
                     // make iCloud download its listing, so its size stays unknown.
                     guard !entry.isDataless else {
-                        output.folderTotals.addSubfolder(relativePath: relativePath)
+                        output.directoryTotals.addSubfolder(relativePath: relativePath, isListed: false)
                         return
                     }
 
@@ -156,7 +156,7 @@ nonisolated enum CloudFileDiskScanner {
                             return
                         }
 
-                        output.folderTotals.addFile(
+                        output.directoryTotals.addFile(
                             relativePath: relativePath,
                             byteSize: usage.logicalSize,
                             isLocal: usage.hasLocalContent,
@@ -166,13 +166,13 @@ nonisolated enum CloudFileDiskScanner {
                             output.files.append(package)
                         }
                     } else {
-                        output.folderTotals.addSubfolder(relativePath: relativePath)
+                        output.directoryTotals.addSubfolder(relativePath: relativePath)
                         output.subdirectories.append(PendingDirectory(path: path, relativePath: relativePath))
                     }
                 } else if entry.isRegularFile {
                     output.scannedFileCount += 1
                     guard !entry.isDataless else {
-                        output.folderTotals.addFile(
+                        output.directoryTotals.addFile(
                             relativePath: relativePath,
                             byteSize: entry.logicalSize,
                             isLocal: false,
@@ -197,7 +197,7 @@ nonisolated enum CloudFileDiskScanner {
                         return
                     }
 
-                    output.folderTotals.addFile(
+                    output.directoryTotals.addFile(
                         relativePath: relativePath,
                         byteSize: entry.logicalSize,
                         isLocal: true,
@@ -284,7 +284,7 @@ nonisolated private struct PendingDirectory: Sendable {
 nonisolated private struct DirectoryOutput {
     var subdirectories: [PendingDirectory] = []
     var files: [CloudFile] = []
-    var folderTotals: [String: CloudFolderTotal] = [:]
+    var directoryTotals: [String: CloudFolderTotal] = [:]
     var scannedFileCount = 0
     var skippedFileCount = 0
     var notSyncedFileCount = 0
@@ -311,7 +311,7 @@ nonisolated private final class ScanState: @unchecked Sendable {
     private let cancelled = Atomic<Bool>(false)
     private var activeWorkerCount = 0
     private var files: [CloudFile] = []
-    private var folderTotals: [String: CloudFolderTotal] = [:]
+    private var directoryTotals: [String: CloudFolderTotal] = [:]
     private var candidateBatch: [CloudFile] = []
     private var scannedFileCount = 0
     private var skippedFileCount = 0
@@ -365,7 +365,7 @@ nonisolated private final class ScanState: @unchecked Sendable {
         activeWorkerCount -= 1
         pendingDirectories.append(contentsOf: output.subdirectories)
         files.append(contentsOf: output.files)
-        folderTotals.merge(output.folderTotals)
+        directoryTotals.merge(output.directoryTotals)
         candidateBatch.append(contentsOf: output.files)
         scannedFileCount += output.scannedFileCount
         skippedFileCount += output.skippedFileCount
@@ -385,7 +385,7 @@ nonisolated private final class ScanState: @unchecked Sendable {
         reportProgress()
         return CloudFileScanner.ScanResult(
             files: files.sorted(by: CloudFileScanner.sortByLargestSizeFirst),
-            folderTotals: folderTotals,
+            directoryTotals: directoryTotals,
             skippedFileCount: skippedFileCount,
             scannedFileCount: scannedFileCount,
             notSyncedFileCount: notSyncedFileCount,

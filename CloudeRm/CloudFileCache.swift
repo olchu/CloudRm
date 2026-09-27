@@ -16,8 +16,8 @@ nonisolated enum CloudFileCache {
         let folderPath: String
         let updatedAt: Date
         let files: [CachedFile]
-        /// Missing in snapshots saved before cloud totals were tracked.
-        let folderTotals: [String: CloudFolderTotal]?
+        /// Missing in snapshots saved before per-directory totals were tracked.
+        let directoryTotals: [String: CloudFolderTotal]?
     }
 
     nonisolated struct CachedFile: Codable, Sendable {
@@ -68,12 +68,12 @@ nonisolated enum CloudFileCache {
         return try? FileAccess.resolveSecurityScopedBookmark(bookmarkData)
     }
 
-    nonisolated static func saveSnapshot(folderURL: URL, files: [CloudFile], folderTotals: [String: CloudFolderTotal]) {
+    nonisolated static func saveSnapshot(folderURL: URL, files: [CloudFile], directoryTotals: [String: CloudFolderTotal]) {
         let snapshot = Snapshot(
             folderPath: folderURL.standardizedFileURL.path(percentEncoded: false),
             updatedAt: Date(),
             files: files.map(CachedFile.init(file:)),
-            folderTotals: folderTotals
+            directoryTotals: directoryTotals
         )
 
         guard let data = try? JSONEncoder().encode(snapshot) else {
@@ -122,8 +122,8 @@ nonisolated enum CloudFileCache {
 actor CloudFileCacheStore {
     static let shared = CloudFileCacheStore()
 
-    func saveSnapshot(folderURL: URL, files: [CloudFile], folderTotals: [String: CloudFolderTotal]) {
-        CloudFileCache.saveSnapshot(folderURL: folderURL, files: files, folderTotals: folderTotals)
+    func saveSnapshot(folderURL: URL, files: [CloudFile], directoryTotals: [String: CloudFolderTotal]) {
+        CloudFileCache.saveSnapshot(folderURL: folderURL, files: files, directoryTotals: directoryTotals)
     }
 
     func loadSnapshot(for folderURL: URL) -> CloudFileCache.Snapshot? {

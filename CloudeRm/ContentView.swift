@@ -18,7 +18,7 @@ struct ContentView: View {
             HStack(spacing: 0) {
                 mainPanel
 
-                if viewModel.selectedFolderSummary != nil {
+                if viewModel.currentFolder != nil {
                     Divider()
                         .overlay(AppPalette.stroke)
 
@@ -32,10 +32,10 @@ struct ContentView: View {
         .alert("Выгрузить локальные копии?", isPresented: $isConfirmingFolderEviction) {
             Button("Отмена", role: .cancel) {}
             Button("Выгрузить", role: .destructive) {
-                viewModel.evictSelectedFolderLocalCopies()
+                viewModel.evictCurrentFolderLocalCopies()
             }
         } message: {
-            if let folder = viewModel.selectedFolderSummary {
+            if let folder = viewModel.currentFolder {
                 Text("Файлы останутся в iCloud, но локальная копия папки \(folder.name) будет удалена с этого Mac.")
             }
         }
@@ -46,10 +46,14 @@ struct ContentView: View {
             topBar
             filtersBar
 
+            if viewModel.currentFolderPath != nil {
+                breadcrumbBar
+            }
+
             if viewModel.isScanning && viewModel.files.isEmpty {
                 scanningState
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if viewModel.filteredFolderSummaries.isEmpty {
+            } else if viewModel.isCurrentLevelEmpty {
                 emptyState
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -198,18 +202,75 @@ struct ContentView: View {
             ScrollView {
                 LazyVStack(spacing: 8) {
                     ForEach(viewModel.filteredFolderSummaries) { folder in
-                        FolderListRow(
-                            folder: folder,
-                            isSelected: viewModel.selectedFolderID == folder.id
-                        ) {
-                            viewModel.selectedFolderID = folder.id
+                        FolderListRow(folder: folder, isSelected: false) {
+                            viewModel.openFolder(folder.id)
                         }
+                    }
+
+                    ForEach(viewModel.levelFiles) { file in
+                        FolderFileRow(file: file) {
+                            viewModel.evictFile(file)
+                        }
+                    }
+
+                    if viewModel.levelCloudOnlyFileCount > 0 {
+                        Label(
+                            "Ещё \(viewModel.levelCloudOnlyFileCount) в iCloud • \(byteCountText(viewModel.levelCloudOnlyByteSize))",
+                            systemImage: "icloud"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(AppPalette.secondaryText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .padding(.top, 4)
                     }
                 }
                 .padding(.vertical, 1)
             }
             .scrollIndicators(.automatic)
+            .id(viewModel.currentFolderPath)
         }
+    }
+
+    private var breadcrumbBar: some View {
+        HStack(spacing: 8) {
+            Button(action: viewModel.openParentFolder) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 12, weight: .bold))
+                    .frame(width: 28, height: 26)
+            }
+            .buttonStyle(IconButtonStyle())
+            .keyboardShortcut("[", modifiers: .command)
+            .help("Назад")
+
+            ScrollView(.horizontal) {
+                HStack(spacing: 6) {
+                    breadcrumbButton("iCloud Drive", isCurrent: false, action: viewModel.openRootFolder)
+
+                    ForEach(Array(viewModel.currentFolderTrail.enumerated()), id: \.offset) { index, item in
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(AppPalette.secondaryText)
+
+                        breadcrumbButton(item.title, isCurrent: index == viewModel.currentFolderTrail.count - 1) {
+                            viewModel.openFolder(item.path)
+                        }
+                    }
+                }
+            }
+            .scrollIndicators(.never)
+        }
+    }
+
+    private func breadcrumbButton(_ title: String, isCurrent: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 12, weight: isCurrent ? .semibold : .regular, design: .monospaced))
+                .foregroundStyle(isCurrent ? AppPalette.primaryText : AppPalette.secondaryText)
+                .lineLimit(1)
+        }
+        .buttonStyle(.plain)
+        .disabled(isCurrent)
     }
 
     private var scanningBanner: some View {
@@ -265,7 +326,7 @@ struct ContentView: View {
             Text(viewModel.hasSelectedFolder ? "No folders match this view" : "Choose an iCloud Drive folder")
                 .font(.title3.weight(.semibold))
 
-            Text(viewModel.hasSelectedFolder ? viewModel.statusMessage : "Scan Now will use the fast macOS metadata index first.")
+            Text(viewModel.hasSelectedFolder ? viewModel.statusMessage : "Scan Now reads iCloud Drive straight from disk.")
                 .font(.body)
                 .foregroundStyle(AppPalette.secondaryText)
                 .multilineTextAlignment(.center)
@@ -330,12 +391,12 @@ struct ContentView: View {
 
     private var detailsPanel: some View {
         VStack(alignment: .leading, spacing: 22) {
-            if let folder = viewModel.selectedFolderSummary {
+            if let folder = viewModel.currentFolder {
                 FolderDetailsPanel(
                     folder: folder,
                     statusMessage: viewModel.statusMessage,
                     errorMessage: viewModel.errorMessage,
-                    canFreeUpSpace: viewModel.canEvictSelectedFolder,
+                    canFreeUpSpace: viewModel.canEvictCurrentFolder,
                     isBusy: viewModel.isEvicting,
                     onFreeUp: { isConfirmingFolderEviction = true },
                     onReveal: revealSelectedFolder
@@ -377,7 +438,7 @@ struct ContentView: View {
     }
 
     private func revealSelectedFolder() {
-        guard let folder = viewModel.selectedFolderSummary, let rootURL = viewModel.selectedFolderURL else {
+        guard let folder = viewModel.currentFolder, let rootURL = viewModel.selectedFolderURL else {
             return
         }
 
@@ -1156,7 +1217,7 @@ private struct FolderDetailsPanel: View {
                     .font(.title3.weight(.bold))
                     .lineLimit(2)
 
-                Text("iCloud Drive  ›  \(folder.relativePath)")
+                Text((["iCloud Drive"] + folder.relativePath.split(separator: "/").map(String.init)).joined(separator: "  ›  "))
                     .font(.callout)
                     .foregroundStyle(AppPalette.secondaryText)
                     .lineLimit(2)
@@ -1199,12 +1260,6 @@ private struct FolderDetailsPanel: View {
 
                 Button(action: onReveal) {
                     Label("Reveal in Finder", systemImage: "folder")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(SecondaryButtonStyle())
-
-                Button {} label: {
-                    Label("More", systemImage: "ellipsis")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(SecondaryButtonStyle())
