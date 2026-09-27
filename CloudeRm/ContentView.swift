@@ -109,15 +109,21 @@ struct ContentView: View {
                 if viewModel.hasSelectedFolder {
                     viewModel.refreshSelectedFolder()
                 } else {
-                    viewModel.chooseFolder()
+                    viewModel.analyzeDefaultICloudDriveFolder()
                 }
             } label: {
-                Label("Scan Now", systemImage: "arrow.triangle.2.circlepath.icloud")
+                Label(viewModel.hasSelectedFolder ? "Scan Now" : "Analyze iCloud Drive", systemImage: "arrow.triangle.2.circlepath.icloud")
             }
             .buttonStyle(PrimaryButtonStyle())
             .disabled(viewModel.isEvicting)
 
             Menu {
+                Button {
+                    viewModel.analyzeDefaultICloudDriveFolder()
+                } label: {
+                    Label("Analyze iCloud Drive", systemImage: "icloud")
+                }
+
                 Button {
                     viewModel.chooseFolder()
                 } label: {
@@ -194,7 +200,7 @@ struct ContentView: View {
                     ForEach(viewModel.filteredFolderSummaries) { folder in
                         FolderListRow(
                             folder: folder,
-                            isSelected: viewModel.selectedFolderSummary?.id == folder.id
+                            isSelected: viewModel.selectedFolderID == folder.id
                         ) {
                             viewModel.selectedFolderID = folder.id
                         }
@@ -266,9 +272,9 @@ struct ContentView: View {
                 .frame(maxWidth: 420)
 
             Button {
-                viewModel.hasSelectedFolder ? viewModel.refreshSelectedFolder() : viewModel.chooseFolder()
+                viewModel.hasSelectedFolder ? viewModel.refreshSelectedFolder() : viewModel.analyzeDefaultICloudDriveFolder()
             } label: {
-                Label(viewModel.hasSelectedFolder ? "Scan Now" : "Choose Folder", systemImage: "folder")
+                Label(viewModel.hasSelectedFolder ? "Scan Now" : "Analyze iCloud Drive", systemImage: "icloud")
             }
             .buttonStyle(PrimaryButtonStyle())
             .padding(.top, 4)
@@ -279,9 +285,9 @@ struct ContentView: View {
         HStack(spacing: 0) {
             summaryMetric(icon: "cloud", title: "Total in Cloud", value: byteCountText(viewModel.totalCloudByteSize), tint: AppPalette.cloudBlue)
             summaryDivider
-            summaryMetric(icon: "externaldrive", title: "Total on Mac", value: byteCountText(viewModel.totalKnownByteSize), tint: AppPalette.secondaryText)
+            summaryMetric(icon: "externaldrive", title: "On Mac · Can Free Up", value: byteCountText(viewModel.totalKnownByteSize), tint: AppPalette.warning)
             summaryDivider
-            summaryMetric(icon: "clock.arrow.circlepath", title: "Potential to Free Up", value: byteCountText(viewModel.potentialFreeUpByteSize), tint: AppPalette.warning)
+            summaryMetric(icon: "icloud.and.arrow.down", title: "Only in Cloud", value: byteCountText(viewModel.totalCloudOnlyByteSize), tint: AppPalette.secondaryText)
         }
         .padding(.horizontal, 16)
         .frame(height: 58)
@@ -1083,11 +1089,12 @@ private struct FolderFileRow: View {
 
             Spacer(minLength: 8)
 
-            Text(byteCountText(file.byteSize))
+            Text(byteCountText(file.localByteSize))
                 .font(.caption)
                 .foregroundStyle(AppPalette.secondaryText)
                 .monospacedDigit()
                 .frame(width: 76, alignment: .trailing)
+                .help(fileSizeHelpText)
 
             Text(file.downloadStatus.displayName)
                 .font(.caption)
@@ -1112,6 +1119,12 @@ private struct FolderFileRow: View {
 
     private var statusTint: Color {
         file.downloadStatus.isStoredLocally ? AppPalette.success : AppPalette.cloudBlue
+    }
+
+    private var fileSizeHelpText: String {
+        let local = byteCountText(file.localByteSize)
+        let cloud = byteCountText(file.byteSize)
+        return "На Mac: \(local) • Размер файла: \(cloud)"
     }
 }
 

@@ -10,11 +10,14 @@ import Foundation
 nonisolated enum CloudFileCache {
     private static let folderBookmarkKey = "lastFolderBookmark"
     private static let snapshotKey = "lastFolderSnapshot"
+    private static let snapshotFileName = "last-folder-snapshot.json"
 
     nonisolated struct Snapshot: Codable, Sendable {
         let folderPath: String
         let updatedAt: Date
         let files: [CachedFile]
+        /// Missing in snapshots saved before cloud totals were tracked.
+        let folderTotals: [String: CloudFolderTotal]?
     }
 
     nonisolated struct CachedFile: Codable, Sendable {
@@ -22,6 +25,7 @@ nonisolated enum CloudFileCache {
         let displayName: String
         let relativePath: String
         let byteSize: Int64?
+        let allocatedByteSize: Int64?
         let modificationDate: Date?
         let downloadStatusName: String
 
@@ -30,6 +34,7 @@ nonisolated enum CloudFileCache {
             displayName = file.displayName
             relativePath = file.relativePath
             byteSize = file.byteSize
+            allocatedByteSize = file.allocatedByteSize
             modificationDate = file.modificationDate
             downloadStatusName = file.downloadStatus.cacheName
         }
@@ -40,6 +45,7 @@ nonisolated enum CloudFileCache {
                 displayName: displayName,
                 relativePath: relativePath,
                 byteSize: byteSize,
+                allocatedByteSize: allocatedByteSize,
                 modificationDate: modificationDate,
                 downloadStatus: CloudDownloadStatus(cacheName: downloadStatusName)
             )
@@ -62,30 +68,66 @@ nonisolated enum CloudFileCache {
         return try? FileAccess.resolveSecurityScopedBookmark(bookmarkData)
     }
 
-    nonisolated static func saveSnapshot(folderURL: URL, files: [CloudFile]) {
+    nonisolated static func saveSnapshot(folderURL: URL, files: [CloudFile], folderTotals: [String: CloudFolderTotal]) {
         let snapshot = Snapshot(
             folderPath: folderURL.standardizedFileURL.path(percentEncoded: false),
             updatedAt: Date(),
-            files: files.map(CachedFile.init(file:))
+            files: files.map(CachedFile.init(file:)),
+            folderTotals: folderTotals
         )
 
         guard let data = try? JSONEncoder().encode(snapshot) else {
             return
         }
 
-        UserDefaults.standard.set(data, forKey: snapshotKey)
+        guard let snapshotURL = try? snapshotFileURL() else {
+            return
+        }
+
+        try? data.write(to: snapshotURL, options: .atomic)
     }
 
     nonisolated static func loadSnapshot(for folderURL: URL) -> Snapshot? {
-        guard
-            let data = UserDefaults.standard.data(forKey: snapshotKey),
-            let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data)
-        else {
+        let data: Data?
+        if let snapshotURL = try? snapshotFileURL(), let fileData = try? Data(contentsOf: snapshotURL) {
+            data = fileData
+        } else {
+            data = UserDefaults.standard.data(forKey: snapshotKey)
+        }
+
+        guard let data, let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data) else {
             return nil
         }
 
         let folderPath = folderURL.standardizedFileURL.path(percentEncoded: false)
         return snapshot.folderPath == folderPath ? snapshot : nil
+    }
+
+    nonisolated private static func snapshotFileURL() throws -> URL {
+        let applicationSupportURL = try FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        let cacheDirectoryURL = applicationSupportURL.appendingPathComponent("CloudeRm", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: cacheDirectoryURL,
+            withIntermediateDirectories: true
+        )
+        return cacheDirectoryURL.appendingPathComponent(snapshotFileName, isDirectory: false)
+    }
+}
+
+actor CloudFileCacheStore {
+    static let shared = CloudFileCacheStore()
+
+    func saveSnapshot(folderURL: URL, files: [CloudFile], folderTotals: [String: CloudFolderTotal]) {
+        CloudFileCache.saveSnapshot(folderURL: folderURL, files: files, folderTotals: folderTotals)
+    }
+
+    func loadSnapshot(for folderURL: URL) -> CloudFileCache.Snapshot? {
+        CloudFileCache.loadSnapshot(for: folderURL)
     }
 }
 

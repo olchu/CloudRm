@@ -44,16 +44,41 @@ enum CloudFileEvictor {
         }
     }
 
+    nonisolated static func evict(_ files: [CloudFile], accessFolderURL: URL?) -> [(CloudFile.ID, EvictionResult)] {
+        if let accessFolderURL {
+            return FileAccess.withSecurityScopedAccess(to: accessFolderURL) {
+                files.map { file in
+                    (file.id, evictionResult(for: file.url))
+                }
+            }
+        }
+
+        return files.map { file in
+            (file.id, evictionResult(for: file.url))
+        }
+    }
+
+    nonisolated private static func evictionResult(for fileURL: URL) -> EvictionResult {
+        do {
+            try evictValidatedFile(at: fileURL)
+            return .success
+        } catch {
+            return .failure(error.localizedDescription)
+        }
+    }
+
     nonisolated private static func evictValidatedFile(at fileURL: URL) throws {
         let resourceKeys: Set<URLResourceKey> = [
             .isDirectoryKey,
+            .isPackageKey,
             .isUbiquitousItemKey,
             .ubiquitousItemDownloadingStatusKey,
             .ubiquitousItemIsDownloadingKey
         ]
         let values = try fileURL.resourceValues(forKeys: resourceKeys)
 
-        guard values.isDirectory != true else {
+        // Packages such as .pages documents are single iCloud items.
+        guard values.isDirectory != true || values.isPackage == true else {
             throw EvictionError.selectedItemIsDirectory
         }
 

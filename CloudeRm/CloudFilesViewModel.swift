@@ -8,7 +8,7 @@
 import Foundation
 import Observation
 
-enum CloudFolderFilter: String, CaseIterable, Identifiable {
+nonisolated enum CloudFolderFilter: String, CaseIterable, Identifiable, Sendable {
     case all
     case downloaded
     case cloudOnly
@@ -33,7 +33,7 @@ enum CloudFolderFilter: String, CaseIterable, Identifiable {
     }
 }
 
-enum CloudFolderSort: String, CaseIterable, Identifiable {
+nonisolated enum CloudFolderSort: String, CaseIterable, Identifiable, Sendable {
     case size
     case name
     case modified
@@ -55,7 +55,7 @@ enum CloudFolderSort: String, CaseIterable, Identifiable {
     }
 }
 
-enum CloudFolderDownloadState: Hashable {
+nonisolated enum CloudFolderDownloadState: Hashable, Sendable {
     case downloaded
     case cloudOnly
     case partial
@@ -72,7 +72,7 @@ enum CloudFolderDownloadState: Hashable {
     }
 }
 
-struct CloudFolderSummary: Identifiable, Hashable {
+nonisolated struct CloudFolderSummary: Identifiable, Hashable, Sendable {
     let id: String
     let name: String
     let relativePath: String
@@ -112,18 +112,22 @@ struct CloudFolderSummary: Identifiable, Hashable {
 @Observable
 final class CloudFilesViewModel {
     var selectedFolderURL: URL?
-    var files: [CloudFile] = []
+    private(set) var files: [CloudFile] = []
     var selectedFileIDs: Set<CloudFile.ID> = []
     var selectedFolderID: CloudFolderSummary.ID?
-    var searchText = ""
+    var searchText = "" {
+        didSet {
+            rebuildDerivedState()
+        }
+    }
     var folderFilter: CloudFolderFilter = .all {
         didSet {
-            ensureSelectedFolderStillExists()
+            rebuildDerivedState()
         }
     }
     var folderSort: CloudFolderSort = .size {
         didSet {
-            ensureSelectedFolderStillExists()
+            rebuildDerivedState()
         }
     }
     var statusMessage = "Выберите папку iCloud Drive"
@@ -132,18 +136,35 @@ final class CloudFilesViewModel {
     var isEvicting = false
     var skippedFileCount = 0
     var scannedFileCount = 0
+    private(set) var folderSummaries: [CloudFolderSummary] = []
+    private(set) var filteredFolderSummaries: [CloudFolderSummary] = []
+    private(set) var totalKnownByteSize: Int64 = 0
+    private(set) var totalCloudByteSize: Int64 = 0
+    private(set) var totalCloudOnlyByteSize: Int64 = 0
+
+    @ObservationIgnored
+    private var folderTotals: [String: CloudFolderTotal] = [:]
 
     @ObservationIgnored
     private var scanTask: Task<Void, Never>?
-
-    @ObservationIgnored
-    private var metadataScanner: CloudFileMetadataScanner?
 
     @ObservationIgnored
     private var scanGeneration = 0
 
     @ObservationIgnored
     private var progressFileIDs: Set<CloudFile.ID> = []
+
+    @ObservationIgnored
+    private var derivedStateTask: Task<Void, Never>?
+
+    @ObservationIgnored
+    private var derivedStateRevision = 0
+
+    @ObservationIgnored
+    private var snapshotLoadTask: Task<Void, Never>?
+
+    @ObservationIgnored
+    private var snapshotSaveTask: Task<Void, Never>?
 
     init() {
         restoreLastFolder()
@@ -155,68 +176,6 @@ final class CloudFilesViewModel {
 
     var selectedFolderDisplayPath: String {
         selectedFolderURL?.path(percentEncoded: false) ?? "Папка не выбрана"
-    }
-
-    var totalKnownByteSize: Int64 {
-        files.reduce(0) { total, file in
-            total + (file.downloadStatus.isStoredLocally ? (file.byteSize ?? 0) : 0)
-        }
-    }
-
-    var totalCloudByteSize: Int64 {
-        files.reduce(0) { total, file in
-            total + (file.byteSize ?? 0)
-        }
-    }
-
-    var potentialFreeUpByteSize: Int64 {
-        totalKnownByteSize
-    }
-
-    var folderSummaries: [CloudFolderSummary] {
-        let groupedFiles = Dictionary(grouping: files, by: folderKey(for:))
-
-        return groupedFiles.map { key, groupedFiles in
-            let sortedFiles = groupedFiles.sorted {
-                $0.relativePath.localizedStandardCompare($1.relativePath) == .orderedAscending
-            }
-            let localByteSize = sortedFiles.reduce(Int64(0)) { total, file in
-                total + (file.downloadStatus.isStoredLocally ? (file.byteSize ?? 0) : 0)
-            }
-            let cloudByteSize = sortedFiles.reduce(Int64(0)) { total, file in
-                total + (file.byteSize ?? 0)
-            }
-            let folderCount = Set(
-                sortedFiles.compactMap { file -> String? in
-                    guard let slashIndex = file.relativePath.lastIndex(of: "/") else {
-                        return nil
-                    }
-
-                    return String(file.relativePath[..<slashIndex])
-                }
-            ).count
-            let lastModified = sortedFiles.compactMap(\.modificationDate).max()
-
-            return CloudFolderSummary(
-                id: key,
-                name: folderName(for: key, files: sortedFiles),
-                relativePath: key,
-                files: sortedFiles,
-                fileCount: sortedFiles.count,
-                folderCount: folderCount,
-                localByteSize: localByteSize,
-                cloudByteSize: max(cloudByteSize, localByteSize),
-                lastModified: lastModified
-            )
-        }
-        .sorted(by: sortFolderSummaries)
-    }
-
-    var filteredFolderSummaries: [CloudFolderSummary] {
-        folderSummaries
-            .filter(matchesCurrentFilter)
-            .filter(matchesSearch)
-            .sorted(by: sortFolderSummaries)
     }
 
     var selectedFolderSummary: CloudFolderSummary? {
@@ -249,7 +208,7 @@ final class CloudFilesViewModel {
 
     var selectedKnownByteSize: Int64 {
         selectedFiles.reduce(0) { total, file in
-            total + (file.byteSize ?? 0)
+            total + file.localByteSize
         }
     }
 
@@ -284,24 +243,33 @@ final class CloudFilesViewModel {
             return
         }
 
-        do {
-            try FileAccess.validateFolder(folderURL)
-            CloudFileCache.saveLastFolder(folderURL)
+        useSelectedFolder(folderURL, initialStatus: "Сканирование...")
+    }
 
-            selectedFolderURL = folderURL
-            files = []
-            selectedFileIDs = []
-            selectedFolderID = nil
-            errorMessage = nil
-            isEvicting = false
-            skippedFileCount = 0
-            scannedFileCount = 0
-            statusMessage = "Сканирование..."
-            loadCachedSnapshot(for: folderURL)
-            scanSelectedFolder()
+    func analyzeDefaultICloudDriveFolder() {
+        let folderURL = FileAccess.defaultICloudDriveFolderURL
+
+        do {
+            try useFolder(folderURL, initialStatus: "Анализируем iCloud Drive...")
+        } catch {
+            guard let confirmedFolderURL = FileAccess.selectICloudDriveFolder() else {
+                errorMessage = error.localizedDescription
+                statusMessage = "Нужен доступ к папке iCloud Drive"
+                return
+            }
+
+            useSelectedFolder(confirmedFolderURL, initialStatus: "Анализируем iCloud Drive...")
+        }
+    }
+
+    private func useSelectedFolder(_ folderURL: URL, initialStatus: String) {
+        do {
+            try useFolder(folderURL, initialStatus: initialStatus)
         } catch {
             selectedFolderURL = nil
             files = []
+            folderTotals = [:]
+            resetDerivedState()
             selectedFileIDs = []
             selectedFolderID = nil
             errorMessage = error.localizedDescription
@@ -312,14 +280,31 @@ final class CloudFilesViewModel {
         }
     }
 
+    private func useFolder(_ folderURL: URL, initialStatus: String) throws {
+        try FileAccess.validateFolder(folderURL)
+        CloudFileCache.saveLastFolder(folderURL)
+
+        selectedFolderURL = folderURL
+        files = []
+        folderTotals = [:]
+        resetDerivedState()
+        selectedFileIDs = []
+        selectedFolderID = nil
+        errorMessage = nil
+        isEvicting = false
+        skippedFileCount = 0
+        scannedFileCount = 0
+        statusMessage = initialStatus
+        loadCachedSnapshot(for: folderURL)
+        scanSelectedFolder()
+    }
+
     func scanSelectedFolder() {
         guard let selectedFolderURL else {
             return
         }
 
         scanTask?.cancel()
-        metadataScanner?.cancel()
-        metadataScanner = nil
         scanGeneration += 1
         let generation = scanGeneration
         isScanning = true
@@ -336,59 +321,22 @@ final class CloudFilesViewModel {
         progressFileIDs = Set(files.map(\.id))
 
         scanTask = Task { [weak self, selectedFolderURL] in
-            guard let self else {
-                return
-            }
-
             do {
-                let scanner = CloudFileMetadataScanner(folderURL: selectedFolderURL) { [weak self] progress in
-                    self?.applyScanProgress(progress, generation: generation)
+                let result = try await CloudFileDiskScanner.scan(folderURL: selectedFolderURL) { [weak self] progress in
+                    Task { @MainActor [weak self] in
+                        self?.applyScanProgress(progress, generation: generation)
+                    }
                 }
-                metadataScanner = scanner
-                let result = try await scanner.start()
 
                 guard !Task.isCancelled else {
                     return
                 }
 
-                if result.files.isEmpty {
-                    statusMessage = "Проверяем файлы в выбранной папке..."
-                    let fallbackResult = try await Self.scanWithFileManager(folderURL: selectedFolderURL) { [weak self] progress in
-                        Task { @MainActor [weak self] in
-                            self?.applyScanProgress(progress, generation: generation)
-                        }
-                    }
-
-                    guard !Task.isCancelled else {
-                        return
-                    }
-
-                    finishScan(fallbackResult, generation: generation)
-                } else {
-                    finishScan(result, generation: generation)
-                }
-            } catch is CancellationError, CloudFileMetadataScanner.MetadataScanError.cancelled {
-                markScanStopped(generation: generation)
+                self?.finishScan(result, generation: generation)
+            } catch is CancellationError {
+                self?.markScanStopped(generation: generation)
             } catch {
-                statusMessage = "Проверяем файлы в выбранной папке..."
-
-                do {
-                    let fallbackResult = try await Self.scanWithFileManager(folderURL: selectedFolderURL) { [weak self] progress in
-                        Task { @MainActor [weak self] in
-                            self?.applyScanProgress(progress, generation: generation)
-                        }
-                    }
-
-                    guard !Task.isCancelled else {
-                        return
-                    }
-
-                    finishScan(fallbackResult, generation: generation)
-                } catch is CancellationError {
-                    markScanStopped(generation: generation)
-                } catch {
-                    failScan(error, generation: generation)
-                }
+                self?.failFastScan(error, generation: generation)
             }
         }
     }
@@ -403,14 +351,14 @@ final class CloudFilesViewModel {
         }
 
         scanTask?.cancel()
-        metadataScanner?.cancel()
-        metadataScanner = nil
         scanGeneration += 1
         let generation = scanGeneration
         isScanning = true
         isEvicting = false
         errorMessage = nil
         files = []
+        folderTotals = [:]
+        resetDerivedState()
         selectedFileIDs = []
         selectedFolderID = nil
         skippedFileCount = 0
@@ -447,8 +395,6 @@ final class CloudFilesViewModel {
 
     func cancelScan() {
         scanGeneration += 1
-        metadataScanner?.cancel()
-        metadataScanner = nil
         scanTask?.cancel()
         scanTask = nil
         isScanning = false
@@ -482,6 +428,7 @@ final class CloudFilesViewModel {
 
             switch result {
             case .success:
+                recordEviction(of: [file])
                 removeEvictedFile(withID: file.id)
                 saveCurrentSnapshot()
                 statusMessage = "Локальная копия выгружена"
@@ -513,15 +460,12 @@ final class CloudFilesViewModel {
         errorMessage = nil
         statusMessage = "Выгружаем локальные копии..."
 
-        for file in filesToEvict {
-            updateEvictionResult(for: file.id, result: .pending)
-        }
+        let fileIDsToEvict = Set(filesToEvict.map(\.id))
+        updateEvictionResults(for: fileIDsToEvict, result: .pending)
 
         Task { [selectedFolderURL] in
             let results = await Task.detached(priority: .userInitiated) {
-                filesToEvict.map { file in
-                    (file.id, CloudFileEvictor.evict(file, accessFolderURL: selectedFolderURL))
-                }
+                CloudFileEvictor.evict(filesToEvict, accessFolderURL: selectedFolderURL)
             }.value
 
             let successfulIDs = Set(results.compactMap { fileID, result in
@@ -543,13 +487,17 @@ final class CloudFilesViewModel {
                 return true
             }
 
-            for fileID in successfulIDs {
-                removeEvictedFile(withID: fileID)
-            }
+            recordEviction(of: filesToEvict.filter { successfulIDs.contains($0.id) })
+            files.removeAll { successfulIDs.contains($0.id) }
+            selectedFileIDs.subtract(successfulIDs)
 
-            for (fileID, result) in failedResults {
-                updateEvictionResult(for: fileID, result: result)
+            let failuresByID = Dictionary(uniqueKeysWithValues: failedResults)
+            for index in files.indices {
+                if let result = failuresByID[files[index].id] {
+                    files[index].evictionResult = result
+                }
             }
+            rebuildDerivedState()
 
             isEvicting = false
             saveCurrentSnapshot()
@@ -582,10 +530,28 @@ final class CloudFilesViewModel {
         files[index].evictionResult = result
     }
 
+    private func updateEvictionResults(for fileIDs: Set<CloudFile.ID>, result: EvictionResult) {
+        for index in files.indices where fileIDs.contains(files[index].id) {
+            files[index].evictionResult = result
+        }
+    }
+
+    /// Evicted files leave the list but stay in iCloud, so their size moves
+    /// to the folder's cloud-only total.
+    private func recordEviction(of evictedFiles: [CloudFile]) {
+        for file in evictedFiles {
+            guard let key = CloudFolderTotal.key(forRelativePath: file.relativePath) else {
+                continue
+            }
+
+            folderTotals[key]?.cloudOnlyByteSize += file.byteSize ?? file.localByteSize
+        }
+    }
+
     private func removeEvictedFile(withID fileID: CloudFile.ID) {
         files.removeAll { $0.id == fileID }
         selectedFileIDs.remove(fileID)
-        ensureSelectedFolderStillExists()
+        rebuildDerivedState()
     }
 
     private func restoreLastFolder() {
@@ -604,14 +570,28 @@ final class CloudFilesViewModel {
     }
 
     private func loadCachedSnapshot(for folderURL: URL) {
-        guard let snapshot = CloudFileCache.loadSnapshot(for: folderURL) else {
-            return
-        }
+        snapshotLoadTask?.cancel()
+        snapshotLoadTask = Task { [weak self] in
+            guard let snapshot = await CloudFileCacheStore.shared.loadSnapshot(for: folderURL) else {
+                return
+            }
 
-        files = snapshot.files.map(\.cloudFile)
-        selectedFileIDs = []
-        ensureSelectedFolderStillExists()
-        statusMessage = "Показан кеш от \(snapshot.updatedAt.formatted(date: .abbreviated, time: .shortened))"
+            guard
+                !Task.isCancelled,
+                self?.selectedFolderURL == folderURL,
+                self?.scannedFileCount == 0,
+                self?.files.isEmpty == true
+            else {
+                return
+            }
+
+            self?.files = snapshot.files.map(\.cloudFile)
+            self?.folderTotals = snapshot.folderTotals ?? [:]
+            self?.selectedFileIDs = []
+            self?.progressFileIDs = Set(snapshot.files.map(\.url))
+            self?.rebuildDerivedState()
+            self?.statusMessage = "Показан кеш от \(snapshot.updatedAt.formatted(date: .abbreviated, time: .shortened))"
+        }
     }
 
     private func applyScanProgress(_ progress: CloudFileScanner.ScanProgress, generation: Int) {
@@ -631,15 +611,37 @@ final class CloudFilesViewModel {
         }
 
         files = result.files
+        folderTotals = result.folderTotals
+        rebuildDerivedState()
         skippedFileCount = result.skippedFileCount
         scannedFileCount = result.scannedFileCount
         progressFileIDs = Set(result.files.map(\.id))
-        ensureSelectedFolderStillExists()
-        statusMessage = result.files.isEmpty ? "iCloud-файлы не найдены" : "Найдено: \(result.files.count)"
+        statusMessage = result.files.isEmpty ? "Локальные iCloud-файлы не найдены" : "Найдено: \(result.files.count)"
+        if result.notSyncedFileCount > 0 {
+            let notSyncedSize = ByteCountFormatter.string(fromByteCount: result.notSyncedByteSize, countStyle: .file)
+            statusMessage += " • не синхронизируются с iCloud: \(result.notSyncedFileCount) (\(notSyncedSize))"
+        }
         isScanning = false
         scanTask = nil
-        metadataScanner = nil
         saveCurrentSnapshot()
+    }
+
+    private func failFastScan(_ error: Error, generation: Int) {
+        guard generation == scanGeneration else {
+            return
+        }
+
+        files = []
+        folderTotals = [:]
+        resetDerivedState()
+        selectedFileIDs = []
+        selectedFolderID = nil
+        skippedFileCount = 0
+        scannedFileCount = 0
+        errorMessage = error.localizedDescription
+        statusMessage = "Быстрый поиск недоступен. Используйте Full Scan."
+        isScanning = false
+        scanTask = nil
     }
 
     private func markScanStopped(generation: Int) {
@@ -651,7 +653,6 @@ final class CloudFilesViewModel {
         statusMessage = "Сканирование остановлено"
         isScanning = false
         scanTask = nil
-        metadataScanner = nil
     }
 
     private func failScan(_ error: Error, generation: Int) {
@@ -660,6 +661,8 @@ final class CloudFilesViewModel {
         }
 
         files = []
+        folderTotals = [:]
+        resetDerivedState()
         selectedFileIDs = []
         selectedFolderID = nil
         skippedFileCount = 0
@@ -667,7 +670,6 @@ final class CloudFilesViewModel {
         statusMessage = "Не удалось просканировать папку"
         isScanning = false
         scanTask = nil
-        metadataScanner = nil
     }
 
     private func appendScannedFiles(_ newFiles: [CloudFile]) {
@@ -675,9 +677,13 @@ final class CloudFilesViewModel {
             return
         }
 
-        for file in newFiles where progressFileIDs.insert(file.id).inserted {
-            files.append(file)
+        let uniqueFiles = newFiles.filter { progressFileIDs.insert($0.id).inserted }
+        guard !uniqueFiles.isEmpty else {
+            return
         }
+
+        files.append(contentsOf: uniqueFiles)
+        rebuildDerivedState()
     }
 
     private func ensureSelectedFolderStillExists() {
@@ -690,8 +696,136 @@ final class CloudFilesViewModel {
         }
     }
 
-    private func matchesCurrentFilter(_ folder: CloudFolderSummary) -> Bool {
-        switch folderFilter {
+    private func rebuildDerivedState() {
+        derivedStateTask?.cancel()
+        derivedStateRevision += 1
+        let revision = derivedStateRevision
+        let filesSnapshot = files
+        let totalsSnapshot = folderTotals
+        let filter = folderFilter
+        let sort = folderSort
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        derivedStateTask = Task.detached(priority: .userInitiated) { [weak self] in
+            try? await Task.sleep(for: .milliseconds(80))
+            guard !Task.isCancelled else {
+                return
+            }
+
+            let state = Self.makeDerivedState(
+                files: filesSnapshot,
+                folderTotals: totalsSnapshot,
+                filter: filter,
+                sort: sort,
+                searchQuery: query
+            )
+
+            guard !Task.isCancelled else {
+                return
+            }
+
+            await self?.applyDerivedState(state, revision: revision)
+        }
+    }
+
+    private func applyDerivedState(_ state: DerivedState, revision: Int) {
+        guard revision == derivedStateRevision else {
+            return
+        }
+
+        folderSummaries = state.folderSummaries
+        filteredFolderSummaries = state.filteredFolderSummaries
+        totalKnownByteSize = state.totalKnownByteSize
+        totalCloudByteSize = state.totalCloudByteSize
+        totalCloudOnlyByteSize = state.totalCloudOnlyByteSize
+        ensureSelectedFolderStillExists()
+        derivedStateTask = nil
+    }
+
+    private func resetDerivedState() {
+        derivedStateTask?.cancel()
+        derivedStateTask = nil
+        derivedStateRevision += 1
+        folderSummaries = []
+        filteredFolderSummaries = []
+        totalKnownByteSize = 0
+        totalCloudByteSize = 0
+        totalCloudOnlyByteSize = 0
+    }
+
+    nonisolated private static func makeDerivedState(
+        files: [CloudFile],
+        folderTotals: [String: CloudFolderTotal],
+        filter: CloudFolderFilter,
+        sort: CloudFolderSort,
+        searchQuery: String
+    ) -> DerivedState {
+        let groupedFiles = Dictionary(grouping: files, by: folderKey(for:))
+        // Folders with no local files are known only from the scan totals.
+        let folderKeys = Set(groupedFiles.keys).union(folderTotals.keys)
+        var totalKnownByteSize: Int64 = 0
+        var totalCloudByteSize: Int64 = 0
+        var totalCloudOnlyByteSize: Int64 = 0
+        var summaries: [CloudFolderSummary] = []
+        summaries.reserveCapacity(folderKeys.count)
+
+        for key in folderKeys {
+            let total = folderTotals[key]
+            let sortedFiles = (groupedFiles[key] ?? []).sorted {
+                $0.relativePath.localizedStandardCompare($1.relativePath) == .orderedAscending
+            }
+            let localByteSize = sortedFiles.reduce(Int64(0)) { total, file in
+                total + (file.downloadStatus.isStoredLocally ? file.localByteSize : 0)
+            }
+            let cloudByteSize = total?.byteSize ?? sortedFiles.reduce(Int64(0)) { total, file in
+                total + (file.byteSize ?? 0)
+            }
+            let folderCount = total?.folderCount ?? Set(
+                sortedFiles.compactMap { file -> Substring? in
+                    guard let slashIndex = file.relativePath.lastIndex(of: "/") else {
+                        return nil
+                    }
+
+                    return file.relativePath[..<slashIndex]
+                }
+            ).count
+
+            let lastModified = (sortedFiles.compactMap(\.modificationDate) + [total?.lastModified].compactMap { $0 }).max()
+
+            totalKnownByteSize += localByteSize
+            totalCloudByteSize += max(cloudByteSize, localByteSize)
+            totalCloudOnlyByteSize += total?.cloudOnlyByteSize ?? 0
+            summaries.append(
+                CloudFolderSummary(
+                    id: key,
+                    name: folderName(for: key, files: sortedFiles, isRootFile: total?.isRootFile == true),
+                    relativePath: key,
+                    files: sortedFiles,
+                    fileCount: max(total?.fileCount ?? 0, sortedFiles.count),
+                    folderCount: folderCount,
+                    localByteSize: localByteSize,
+                    cloudByteSize: max(cloudByteSize, localByteSize),
+                    lastModified: lastModified
+                )
+            )
+        }
+
+        summaries.sort { sortFolderSummaries($0, $1, by: sort) }
+        let filteredSummaries = summaries.filter {
+            matches($0, filter: filter) && matches($0, searchQuery: searchQuery)
+        }
+
+        return DerivedState(
+            folderSummaries: summaries,
+            filteredFolderSummaries: filteredSummaries,
+            totalKnownByteSize: totalKnownByteSize,
+            totalCloudByteSize: totalCloudByteSize,
+            totalCloudOnlyByteSize: totalCloudOnlyByteSize
+        )
+    }
+
+    nonisolated private static func matches(_ folder: CloudFolderSummary, filter: CloudFolderFilter) -> Bool {
+        switch filter {
         case .all:
             return true
         case .downloaded:
@@ -705,18 +839,21 @@ final class CloudFilesViewModel {
         }
     }
 
-    private func matchesSearch(_ folder: CloudFolderSummary) -> Bool {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else {
+    nonisolated private static func matches(_ folder: CloudFolderSummary, searchQuery: String) -> Bool {
+        guard !searchQuery.isEmpty else {
             return true
         }
 
-        return folder.name.localizedCaseInsensitiveContains(query)
-            || folder.relativePath.localizedCaseInsensitiveContains(query)
+        return folder.name.localizedCaseInsensitiveContains(searchQuery)
+            || folder.relativePath.localizedCaseInsensitiveContains(searchQuery)
     }
 
-    private func sortFolderSummaries(_ lhs: CloudFolderSummary, _ rhs: CloudFolderSummary) -> Bool {
-        switch folderSort {
+    nonisolated private static func sortFolderSummaries(
+        _ lhs: CloudFolderSummary,
+        _ rhs: CloudFolderSummary,
+        by sort: CloudFolderSort
+    ) -> Bool {
+        switch sort {
         case .size:
             if lhs.cloudByteSize != rhs.cloudByteSize {
                 return lhs.cloudByteSize > rhs.cloudByteSize
@@ -736,17 +873,12 @@ final class CloudFilesViewModel {
         return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
     }
 
-    private func folderKey(for file: CloudFile) -> String {
-        let parts = file.relativePath.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
-        guard let firstPart = parts.first else {
-            return file.displayName
-        }
-
-        return firstPart
+    nonisolated private static func folderKey(for file: CloudFile) -> String {
+        CloudFolderTotal.key(forRelativePath: file.relativePath) ?? file.displayName
     }
 
-    private func folderName(for key: String, files: [CloudFile]) -> String {
-        if files.count == 1, files.first?.relativePath.contains("/") == false {
+    nonisolated private static func folderName(for key: String, files: [CloudFile], isRootFile: Bool) -> String {
+        if isRootFile || (files.count == 1 && files.first?.relativePath.contains("/") == false) {
             return "Root Files"
         }
 
@@ -758,7 +890,16 @@ final class CloudFilesViewModel {
             return
         }
 
-        CloudFileCache.saveSnapshot(folderURL: selectedFolderURL, files: files)
+        let filesSnapshot = files
+        let totalsSnapshot = folderTotals
+        snapshotSaveTask?.cancel()
+        snapshotSaveTask = Task {
+            await CloudFileCacheStore.shared.saveSnapshot(
+                folderURL: selectedFolderURL,
+                files: filesSnapshot,
+                folderTotals: totalsSnapshot
+            )
+        }
     }
 
     nonisolated private static func scanWithFileManager(
@@ -770,5 +911,13 @@ final class CloudFilesViewModel {
         }.value
     }
 
-    private static let largeFolderThreshold: Int64 = 1_000_000_000
+    nonisolated private static let largeFolderThreshold: Int64 = 1_000_000_000
+
+    nonisolated private struct DerivedState: Sendable {
+        let folderSummaries: [CloudFolderSummary]
+        let filteredFolderSummaries: [CloudFolderSummary]
+        let totalKnownByteSize: Int64
+        let totalCloudByteSize: Int64
+        let totalCloudOnlyByteSize: Int64
+    }
 }

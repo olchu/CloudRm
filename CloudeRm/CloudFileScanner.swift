@@ -21,8 +21,12 @@ enum CloudFileScanner {
 
     struct ScanResult: Sendable {
         let files: [CloudFile]
+        let folderTotals: [String: CloudFolderTotal]
         let skippedFileCount: Int
         let scannedFileCount: Int
+        /// Local files inside iCloud Drive that iCloud does not sync.
+        var notSyncedFileCount = 0
+        var notSyncedByteSize: Int64 = 0
     }
 
     struct ScanProgress: Sendable {
@@ -42,13 +46,18 @@ enum CloudFileScanner {
             .ubiquitousItemDownloadingStatusKey,
             .ubiquitousItemIsDownloadingKey,
             .fileSizeKey,
+            .fileAllocatedSizeKey,
+            .totalFileAllocatedSizeKey,
             .contentModificationDateKey
         ]
         let resourceKeySet = Set(resourceKeys)
         var skippedFileCount = 0
         var scannedFileCount = 0
         var files: [CloudFile] = []
+        var folderTotals: [String: CloudFolderTotal] = [:]
         var candidateBatch: [CloudFile] = []
+        let folderPath = folderURL.standardizedFileURL.path(percentEncoded: false)
+        let relativePathPrefix = folderPath.hasSuffix("/") ? folderPath : folderPath + "/"
 
         let didStartAccess = folderURL.startAccessingSecurityScopedResource()
         defer {
@@ -75,6 +84,7 @@ enum CloudFileScanner {
             do {
                 let values = try fileURL.resourceValues(forKeys: resourceKeySet)
                 guard values.isDirectory != true else {
+                    folderTotals.addSubfolder(relativePath: relativePath(for: fileURL, prefix: relativePathPrefix))
                     continue
                 }
 
@@ -85,6 +95,12 @@ enum CloudFileScanner {
                 }
 
                 let downloadStatus = downloadStatus(from: values)
+                folderTotals.addFile(
+                    relativePath: relativePath(for: fileURL, prefix: relativePathPrefix),
+                    byteSize: Int64(values.fileSize ?? 0),
+                    isLocal: downloadStatus.isStoredLocally,
+                    modificationDate: values.contentModificationDate
+                )
                 guard downloadStatus.isStoredLocally else {
                     continue
                 }
@@ -92,8 +108,9 @@ enum CloudFileScanner {
                 let file = CloudFile(
                     url: fileURL,
                     displayName: fileURL.lastPathComponent,
-                    relativePath: relativePath(for: fileURL, in: folderURL),
+                    relativePath: relativePath(for: fileURL, prefix: relativePathPrefix),
                     byteSize: values.fileSize.map(Int64.init),
+                    allocatedByteSize: allocatedByteSize(from: values),
                     modificationDate: values.contentModificationDate,
                     downloadStatus: downloadStatus
                 )
@@ -129,20 +146,29 @@ enum CloudFileScanner {
 
         return ScanResult(
             files: files.sorted(by: sortByLargestSizeFirst),
+            folderTotals: folderTotals,
             skippedFileCount: skippedFileCount,
             scannedFileCount: scannedFileCount
         )
     }
 
-    nonisolated private static func sortByLargestSizeFirst(_ lhs: CloudFile, _ rhs: CloudFile) -> Bool {
-        let lhsSize = lhs.byteSize ?? -1
-        let rhsSize = rhs.byteSize ?? -1
+    nonisolated static func sortByLargestSizeFirst(_ lhs: CloudFile, _ rhs: CloudFile) -> Bool {
+        let lhsSize = lhs.localByteSize
+        let rhsSize = rhs.localByteSize
 
         if lhsSize != rhsSize {
             return lhsSize > rhsSize
         }
 
         return lhs.relativePath.localizedStandardCompare(rhs.relativePath) == .orderedAscending
+    }
+
+    nonisolated private static func allocatedByteSize(from values: URLResourceValues) -> Int64? {
+        if let size = values.totalFileAllocatedSize ?? values.fileAllocatedSize {
+            return Int64(size)
+        }
+
+        return nil
     }
 
     nonisolated private static func downloadStatus(from values: URLResourceValues) -> CloudDownloadStatus {
@@ -164,10 +190,8 @@ enum CloudFileScanner {
         }
     }
 
-    nonisolated private static func relativePath(for fileURL: URL, in folderURL: URL) -> String {
-        let folderPath = folderURL.standardizedFileURL.path(percentEncoded: false)
+    nonisolated private static func relativePath(for fileURL: URL, prefix: String) -> String {
         let filePath = fileURL.standardizedFileURL.path(percentEncoded: false)
-        let prefix = folderPath.hasSuffix("/") ? folderPath : folderPath + "/"
 
         if filePath.hasPrefix(prefix) {
             return String(filePath.dropFirst(prefix.count))

@@ -26,12 +26,28 @@ enum FileAccess {
         }
     }
 
+    nonisolated static var defaultICloudDriveFolderURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs", isDirectory: true)
+    }
+
     @MainActor
     static func selectFolder() -> URL? {
+        selectFolder(startingAt: nil)
+    }
+
+    @MainActor
+    static func selectICloudDriveFolder() -> URL? {
+        selectFolder(startingAt: defaultICloudDriveFolderURL)
+    }
+
+    @MainActor
+    private static func selectFolder(startingAt directoryURL: URL?) -> URL? {
         let panel = NSOpenPanel()
         panel.title = "Выберите папку iCloud Drive"
         panel.message = "Выберите папку, в которой CloudeRm будет искать локально скачанные iCloud-файлы."
         panel.prompt = "Выбрать"
+        panel.directoryURL = directoryURL
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
