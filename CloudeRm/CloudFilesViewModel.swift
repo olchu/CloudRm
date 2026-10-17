@@ -152,7 +152,7 @@ final class CloudFilesViewModel {
             }
         }
     }
-    var statusMessage = "Выберите папку iCloud Drive"
+    var statusMessage = "Choose an iCloud Drive folder"
     var errorMessage: String?
     var isScanning = false
     /// Non-nil while files are being evicted.
@@ -272,7 +272,7 @@ final class CloudFilesViewModel {
             return
         }
 
-        useSelectedFolder(folderURL, initialStatus: "Сканирование...")
+        useSelectedFolder(folderURL, initialStatus: "Scanning...")
     }
 
     func analyzeDefaultICloudDriveFolder() {
@@ -283,15 +283,15 @@ final class CloudFilesViewModel {
         let folderURL = FileAccess.defaultICloudDriveFolderURL
 
         do {
-            try useFolder(folderURL, initialStatus: "Анализируем iCloud Drive...")
+            try useFolder(folderURL, initialStatus: "Analyzing iCloud Drive...")
         } catch {
             guard let confirmedFolderURL = FileAccess.selectICloudDriveFolder() else {
                 errorMessage = error.localizedDescription
-                statusMessage = "Нужен доступ к папке iCloud Drive"
+                statusMessage = "Access to the iCloud Drive folder is required"
                 return
             }
 
-            useSelectedFolder(confirmedFolderURL, initialStatus: "Анализируем iCloud Drive...")
+            useSelectedFolder(confirmedFolderURL, initialStatus: "Analyzing iCloud Drive...")
         }
     }
 
@@ -302,7 +302,7 @@ final class CloudFilesViewModel {
             selectedFolderURL = nil
             clearResults()
             errorMessage = error.localizedDescription
-            statusMessage = "Не удалось выбрать папку"
+            statusMessage = "Could not open the folder"
         }
     }
 
@@ -348,9 +348,9 @@ final class CloudFilesViewModel {
         let generation = scanGeneration
         if fullScan {
             clearResults()
-            statusMessage = "Полное сканирование..."
+            statusMessage = "Running full scan..."
         } else {
-            statusMessage = files.isEmpty ? "Ищем файлы в выбранной папке..." : "Обновление списка..."
+            statusMessage = files.isEmpty ? "Looking for files in the selected folder..." : "Refreshing..."
         }
         isScanning = true
         errorMessage = nil
@@ -379,7 +379,7 @@ final class CloudFilesViewModel {
             } catch {
                 self?.failScan(
                     error,
-                    status: fullScan ? "Не удалось просканировать папку" : "Быстрый поиск недоступен. Используйте Full Scan.",
+                    status: fullScan ? "Could not scan the folder" : "Fast scan is unavailable. Use Full Scan.",
                     generation: generation
                 )
             }
@@ -391,7 +391,7 @@ final class CloudFilesViewModel {
         scanTask?.cancel()
         scanTask = nil
         isScanning = false
-        statusMessage = "Сканирование остановлено"
+        statusMessage = "Scan stopped"
     }
 
     func evictFile(_ file: CloudFile) {
@@ -425,7 +425,7 @@ final class CloudFilesViewModel {
         progress.totalByteSize += newFiles.reduce(0) { $0 + $1.localByteSize }
         evictionProgress = progress
         errorMessage = nil
-        statusMessage = "Выгружаем локальные копии..."
+        statusMessage = "Removing local copies..."
 
         if evictionTask == nil {
             evictionTask = Task {
@@ -500,12 +500,12 @@ final class CloudFilesViewModel {
 
         if progress.failedCount == 0 {
             statusMessage = progress.totalCount == 1
-                ? "Локальная копия выгружена • освобождено \(freedText)"
-                : "Локальные копии выгружены: \(evictedCount) • освобождено \(freedText)"
+                ? "Local copy removed • \(freedText) freed"
+                : "Local copies removed: \(evictedCount) • \(freedText) freed"
         } else if evictedCount == 0 {
-            statusMessage = progress.totalCount == 1 ? "Не удалось выгрузить файл" : "Не удалось выгрузить файлы"
+            statusMessage = progress.totalCount == 1 ? "Could not remove the local copy" : "Could not remove the local copies"
         } else {
-            statusMessage = "Выгружено: \(evictedCount), не удалось: \(progress.failedCount) • освобождено \(freedText)"
+            statusMessage = "Removed: \(evictedCount), failed: \(progress.failedCount) • \(freedText) freed"
         }
     }
 
@@ -528,9 +528,9 @@ final class CloudFilesViewModel {
         loadCachedSnapshot(for: folderURL)
 
         if files.isEmpty {
-            statusMessage = "Последняя папка восстановлена. Нажмите Scan Now."
+            statusMessage = "Last folder restored. Press Scan Now."
         } else {
-            statusMessage = "Показан последний результат. Scan Now обновит список."
+            statusMessage = "Showing the last result. Scan Now refreshes it."
         }
     }
 
@@ -556,7 +556,7 @@ final class CloudFilesViewModel {
             // A scan may already be running; its batches must not re-add these.
             progressFileIDs = Set(snapshot.files.map(\.id))
             rebuildDerivedState()
-            statusMessage = "Показан кеш от \(snapshot.updatedAt.formatted(date: .abbreviated, time: .shortened))"
+            statusMessage = "Showing cached results from \(snapshot.updatedAt.formatted(date: .abbreviated, time: .shortened))"
         }
     }
 
@@ -567,7 +567,7 @@ final class CloudFilesViewModel {
 
         appendScannedFiles(progress.candidateBatch)
         scannedFileCount = progress.scannedFileCount
-        statusMessage = "Сканирование: \(progress.scannedFileCount) файлов, найдено \(progress.candidateFileCount)"
+        statusMessage = "Scanning: \(progress.scannedFileCount) files checked, \(progress.candidateFileCount) found"
     }
 
     private func finishScan(_ result: CloudFileScanner.ScanResult, generation: Int) {
@@ -579,10 +579,10 @@ final class CloudFilesViewModel {
         directoryTotals = result.directoryTotals
         rebuildDerivedState()
         scannedFileCount = result.scannedFileCount
-        statusMessage = result.files.isEmpty ? "Локальные iCloud-файлы не найдены" : "Найдено: \(result.files.count)"
+        statusMessage = result.files.isEmpty ? "No downloaded iCloud files found" : "Found: \(result.files.count)"
         if result.notSyncedFileCount > 0 {
             let notSyncedSize = ByteCountFormatter.string(fromByteCount: result.notSyncedByteSize, countStyle: .file)
-            statusMessage += " • не синхронизируются с iCloud: \(result.notSyncedFileCount) (\(notSyncedSize))"
+            statusMessage += " • not synced with iCloud: \(result.notSyncedFileCount) (\(notSyncedSize))"
         }
         isScanning = false
         scanTask = nil
@@ -594,7 +594,7 @@ final class CloudFilesViewModel {
             return
         }
 
-        statusMessage = "Сканирование остановлено"
+        statusMessage = "Scan stopped"
         isScanning = false
         scanTask = nil
     }
@@ -858,3 +858,28 @@ final class CloudFilesViewModel {
         var totalCloudOnlyByteSize: Int64 = 0
     }
 }
+
+#if DEBUG
+extension CloudFilesViewModel {
+    /// Shows fixed results without touching the disk; used by the README
+    /// screenshot renderer in `scripts/readme-images`.
+    func showSample(
+        folderURL: URL,
+        files: [CloudFile],
+        directoryTotals: [String: CloudFolderTotal],
+        openFolderPath: String? = nil,
+        evictingFileIDs: Set<CloudFile.ID> = [],
+        evictionProgress: EvictionProgress? = nil,
+        statusMessage: String
+    ) {
+        selectedFolderURL = folderURL
+        self.files = files
+        self.directoryTotals = directoryTotals
+        currentFolderPath = openFolderPath
+        self.evictingFileIDs = evictingFileIDs
+        self.evictionProgress = evictionProgress
+        self.statusMessage = statusMessage
+        rebuildDerivedState()
+    }
+}
+#endif

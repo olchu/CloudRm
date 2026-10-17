@@ -1,43 +1,43 @@
-# CloudeRm: спецификация и план разработки
+# CloudeRm: Specification and Development Plan
 
-## Идея
+## Idea
 
-CloudeRm - macOS-приложение для ручного освобождения места, занятого локальными копиями файлов из iCloud Drive.
+CloudeRm is a macOS app for manually freeing up space taken by local copies of iCloud Drive files.
 
-Пользователь выбирает папку внутри iCloud Drive, приложение находит файлы, которые уже скачаны на этот Mac, показывает их в списке и позволяет выбрать отдельные файлы для действия "Выгрузить с этого Mac". Файлы должны остаться в iCloud и быть доступны для повторной загрузки позже.
+The user picks a folder inside iCloud Drive. The app finds files that are already downloaded to this Mac, lists them, and lets the user pick individual files for the "Remove from this Mac" action. The files must stay in iCloud and remain available for download later.
 
-## Главный пользовательский сценарий
+## Main User Flow
 
-1. Пользователь открывает приложение.
-2. Нажимает "Выбрать папку".
-3. Выбирает папку внутри iCloud Drive.
-4. Приложение сканирует файлы внутри выбранной папки.
-5. В таблице появляются только файлы, которые можно безопасно выгрузить локально.
-6. Пользователь отмечает нужные файлы.
-7. Нажимает "Освободить место".
-8. Приложение вызывает системное iCloud-выгружение локальной копии.
-9. Пользователь видит результат по каждому файлу: успешно, ошибка, пропущено.
+1. The user opens the app.
+2. Clicks "Choose Folder".
+3. Picks a folder inside iCloud Drive.
+4. The app scans the files in the selected folder.
+5. The table shows only files whose local copy can be safely removed.
+6. The user selects the files they want.
+7. Clicks "Free Up Space".
+8. The app asks the system to evict the local iCloud copy.
+9. The user sees the result for each file: success, error, or skipped.
 
-## Нецели MVP
+## MVP Non-Goals
 
-- Не удалять файлы из iCloud.
-- Не пытаться управлять всеми облачными провайдерами: Google Drive, Dropbox, OneDrive.
-- Не делать автоматическое фоновое очищение.
-- Не делать daemon/menu bar helper.
-- Не делать сложную аналитику диска.
-- Не менять системные настройки "Optimize Mac Storage".
+- Do not delete files from iCloud.
+- Do not try to manage every cloud provider: Google Drive, Dropbox, OneDrive.
+- No automatic background cleanup.
+- No daemon or menu bar helper.
+- No complex disk analytics.
+- Do not change the system "Optimize Mac Storage" setting.
 
-## Ключевой API
+## Key API
 
-Для выгрузки локальной копии использовать:
+To remove a local copy, use:
 
 ```swift
 try FileManager.default.evictUbiquitousItem(at: fileURL)
 ```
 
-Это действие предназначено для iCloud/ubiquitous item: локальная копия удаляется с устройства, а файл остается в iCloud.
+This action is meant for iCloud (ubiquitous) items: the local copy is removed from the device and the file stays in iCloud.
 
-Для определения статуса файла использовать resource values:
+To determine a file's status, use resource values:
 
 ```swift
 let values = try url.resourceValues(forKeys: [
@@ -52,33 +52,33 @@ let values = try url.resourceValues(forKeys: [
 ])
 ```
 
-Важно: набор доступных ключей и поведение могут отличаться между версиями macOS. Код должен быть терпимым к `nil` и ошибкам чтения metadata.
+Important: the available keys and their behavior can differ between macOS versions. The code must tolerate `nil` values and metadata read errors.
 
-## Архитектура MVP
+## MVP Architecture
 
-Рекомендуемые модули:
+Suggested modules:
 
 - `ContentView`
-  Основной экран: выбор папки, панель действий, таблица файлов, статус сканирования.
+  Main screen: folder picker, action bar, file table, scan status.
 
 - `CloudFile`
-  Модель одного найденного файла: id, url, displayName, relativePath, size, modificationDate, downloadStatus, selection state/result state.
+  Model of one found file: id, url, displayName, relativePath, size, modificationDate, downloadStatus, selection/result state.
 
 - `CloudFileScanner`
-  Рекурсивно обходит выбранную папку и возвращает список кандидатов.
+  Walks the selected folder recursively and returns the list of candidates.
 
 - `CloudFileEvictor`
-  Выполняет `evictUbiquitousItem(at:)` для выбранных файлов и возвращает результат по каждому.
+  Runs `evictUbiquitousItem(at:)` for the selected files and returns a result for each.
 
-- `AppState` или `CloudFilesViewModel`
-  Хранит выбранную папку, список файлов, выбранные id, состояние загрузки/ошибок.
+- `AppState` or `CloudFilesViewModel`
+  Holds the selected folder, the file list, the selected ids, and loading/error state.
 
 - `FileAccess`
-  Работа с `NSOpenPanel`, security-scoped bookmarks и восстановлением доступа после перезапуска.
+  Handles `NSOpenPanel`, security-scoped bookmarks, and restoring access after a relaunch.
 
-## Модель данных
+## Data Model
 
-Минимальная модель:
+Minimal model:
 
 ```swift
 struct CloudFile: Identifiable, Hashable {
@@ -93,7 +93,7 @@ struct CloudFile: Identifiable, Hashable {
 }
 ```
 
-Статусы:
+Statuses:
 
 ```swift
 enum CloudDownloadStatus: Hashable {
@@ -112,589 +112,589 @@ enum EvictionResult: Hashable {
 }
 ```
 
-## Правила безопасности
+## Safety Rules
 
-- Никогда не использовать `removeItem(at:)` для основной операции выгрузки.
-- Перед выгрузкой проверять, что файл является iCloud item.
-- Не выгружать директории в MVP, только файлы.
-- Не выгружать файлы, у которых идет активная загрузка/синхронизация, если статус это показывает.
-- Все ошибки показывать пользователю, не скрывать молча.
-- Перед массовым действием показывать количество файлов и примерный общий размер.
+- Never use `removeItem(at:)` for the main eviction operation.
+- Before evicting, check that the file is an iCloud item.
+- Do not evict directories in the MVP, only files.
+- Do not evict files that are actively downloading or syncing, if the status shows it.
+- Show every error to the user; never hide one silently.
+- Before a bulk action, show the number of files and their approximate total size.
 
-## UX MVP
+## MVP UX
 
-Окно приложения:
+App window:
 
-- Верхняя панель:
-  - кнопка выбора папки;
-  - путь выбранной папки;
-  - кнопка пересканировать.
+- Top bar:
+  - folder picker button;
+  - selected folder path;
+  - rescan button.
 
-- Сводка:
-  - найдено локально скачанных файлов;
-  - выбранное количество;
-  - выбранный общий размер.
+- Summary:
+  - number of downloaded files found;
+  - number selected;
+  - total selected size.
 
-- Таблица:
+- Table:
   - checkbox;
-  - имя;
-  - относительный путь;
-  - размер;
-  - дата изменения;
-  - статус;
-  - результат выгрузки.
+  - name;
+  - relative path;
+  - size;
+  - modification date;
+  - status;
+  - eviction result.
 
-- Нижняя панель:
-  - "Выбрать все";
-  - "Снять выбор";
-  - "Освободить место";
+- Bottom bar:
+  - "Select All";
+  - "Deselect All";
+  - "Free Up Space";
   - progress/status text.
 
-Тон интерфейса: утилитарный, спокойный, без маркетингового экрана.
+Interface tone: utilitarian, calm, no marketing screen.
 
-## План маленьких независимых задач
+## Plan of Small Independent Tasks
 
-Каждую задачу можно начинать в новой сессии. В начале новой сессии достаточно сказать: "Открой `SPEC.md` и выполни задачу N".
+Each task can be started in a new session. At the start of a new session it is enough to say: "Open `SPEC.md` and do task N".
 
-### 1. Создать базовый скелет состояния приложения - готово
+### 1. Create the basic app state skeleton - done
 
-Цель: уйти от `Hello, world!` к минимальной структуре приложения.
+Goal: move from `Hello, world!` to a minimal app structure.
 
-Статус: готово.
+Status: done.
 
-Сделано:
+Done:
 
-- добавлены `CloudFile.swift`, `CloudFilesViewModel.swift`;
-- `ContentView` подключен к view model;
-- стартовый экран заменил шаблонный `Hello, world!`;
-- проект собирался после изменения.
+- added `CloudFile.swift` and `CloudFilesViewModel.swift`;
+- `ContentView` is connected to the view model;
+- the start screen replaced the template `Hello, world!`;
+- the project built after the change.
 
-Сделать:
+To do:
 
-- создать `CloudFile.swift` с моделями `CloudFile`, `CloudDownloadStatus`, `EvictionResult`;
-- создать `CloudFilesViewModel.swift`;
-- подключить view model к `ContentView`;
-- вывести пустое состояние "Выберите папку iCloud Drive".
+- create `CloudFile.swift` with the `CloudFile`, `CloudDownloadStatus`, and `EvictionResult` models;
+- create `CloudFilesViewModel.swift`;
+- connect the view model to `ContentView`;
+- show the empty state "Choose an iCloud Drive folder".
 
-Готово, если:
+Done when:
 
-- проект собирается;
-- окно показывает стартовое состояние;
-- модели компилируются и пока не зависят от iCloud API.
+- the project builds;
+- the window shows the initial state;
+- the models compile and do not depend on the iCloud API yet.
 
-### 2. Добавить выбор папки через NSOpenPanel - готово
+### 2. Add folder selection with NSOpenPanel - done
 
-Цель: пользователь может выбрать папку для сканирования.
+Goal: the user can pick a folder to scan.
 
-Статус: готово.
+Status: done.
 
-Сделано:
+Done:
 
-- добавлен `FileAccess.swift`;
-- кнопка "Выбрать папку" открывает `NSOpenPanel`;
-- разрешен выбор только папок;
-- выбранный `URL` сохраняется во view model;
-- путь выбранной папки показывается в интерфейсе.
+- added `FileAccess.swift`;
+- the "Choose Folder" button opens `NSOpenPanel`;
+- only folders can be selected;
+- the selected `URL` is stored in the view model;
+- the selected folder path is shown in the UI.
 
-Сделать:
+To do:
 
-- добавить `FileAccess.swift`;
-- реализовать открытие `NSOpenPanel`;
-- разрешить выбор только папок;
-- сохранить выбранный `URL` в view model;
-- показать путь в интерфейсе.
+- add `FileAccess.swift`;
+- implement opening `NSOpenPanel`;
+- allow selecting folders only;
+- store the selected `URL` in the view model;
+- show the path in the UI.
 
-Готово, если:
+Done when:
 
-- кнопка выбора папки работает;
-- путь выбранной папки отображается;
-- отмена выбора не ломает состояние.
+- the folder picker button works;
+- the selected folder path is displayed;
+- cancelling the picker does not break the state.
 
-### 3. Добавить security-scoped доступ на время сессии - готово
+### 3. Add security-scoped access for the session - done
 
-Цель: корректно читать выбранную пользователем папку в sandbox-сценарии.
+Goal: correctly read the user-selected folder in a sandboxed setup.
 
-Статус: готово.
+Status: done.
 
-Сделано:
+Done:
 
-- добавлен `FileAccess.withSecurityScopedAccess(to:perform:)`;
-- выбранная папка валидируется через security-scoped доступ;
-- ошибки выбора/доступа показываются в UI;
-- bookmark между перезапусками пока не сохраняется, как и планировалось.
+- added `FileAccess.withSecurityScopedAccess(to:perform:)`;
+- the selected folder is validated through security-scoped access;
+- selection and access errors are shown in the UI;
+- the bookmark is not persisted between launches yet, as planned.
 
-Сделать:
+To do:
 
-- обернуть операции чтения в `startAccessingSecurityScopedResource()`;
-- гарантировать `stopAccessingSecurityScopedResource()`;
-- добавить аккуратную обработку ошибок доступа;
-- пока не сохранять bookmark между перезапусками.
+- wrap read operations in `startAccessingSecurityScopedResource()`;
+- guarantee `stopAccessingSecurityScopedResource()`;
+- handle access errors carefully;
+- do not persist the bookmark between launches yet.
 
-Готово, если:
+Done when:
 
-- сканирование может читать выбранную папку;
-- ошибка доступа видна в UI;
-- доступ освобождается после операции.
+- scanning can read the selected folder;
+- an access error is visible in the UI;
+- access is released after the operation.
 
-### 4. Реализовать рекурсивный обход файлов - готово
+### 4. Implement recursive file traversal - done
 
-Цель: получить список обычных файлов внутри выбранной папки.
+Goal: get the list of regular files inside the selected folder.
 
-Статус: готово.
+Status: done.
 
-Сделано:
+Done:
 
-- добавлен `CloudFileScanner.swift`;
-- используется `FileManager.enumerator(at:includingPropertiesForKeys:options:)`;
-- директории, скрытые файлы и package contents пропускаются;
-- сканирование запускается после выбора папки;
-- ошибки отдельных файлов учитываются как skipped;
-- UI показывает progress во время сканирования.
+- added `CloudFileScanner.swift`;
+- uses `FileManager.enumerator(at:includingPropertiesForKeys:options:)`;
+- directories, hidden files, and package contents are skipped;
+- scanning starts after a folder is selected;
+- errors on individual files are counted as skipped;
+- the UI shows progress while scanning.
 
-Сделать:
+To do:
 
-- создать `CloudFileScanner.swift`;
-- использовать `FileManager.enumerator(at:includingPropertiesForKeys:options:)`;
-- пропускать директории;
-- пропускать скрытые файлы и package contents на первом этапе;
-- возвращать промежуточную модель или `CloudFile`.
+- create `CloudFileScanner.swift`;
+- use `FileManager.enumerator(at:includingPropertiesForKeys:options:)`;
+- skip directories;
+- skip hidden files and package contents in the first iteration;
+- return an intermediate model or `CloudFile`.
 
-Готово, если:
+Done when:
 
-- после выбора папки можно получить список файлов;
-- большие папки не блокируют UI навсегда;
-- ошибки отдельных файлов не роняют весь scan.
+- after selecting a folder, a list of files can be obtained;
+- large folders do not block the UI forever;
+- errors on individual files do not crash the whole scan.
 
-### 5. Определять iCloud/ubiquitous статус файла - готово
+### 5. Detect a file's iCloud/ubiquitous status - done
 
-Цель: отличать iCloud-файлы от обычных локальных файлов.
+Goal: tell iCloud files apart from regular local files.
 
-Статус: готово.
+Status: done.
 
-Сделано:
+Done:
 
-- сканер читает `.isUbiquitousItemKey`;
-- обычные локальные файлы не попадают в список;
-- добавлено отображение iCloud download status;
-- metadata errors не роняют весь scan.
+- the scanner reads `.isUbiquitousItemKey`;
+- regular local files do not appear in the list;
+- the iCloud download status is displayed;
+- metadata errors do not crash the whole scan.
 
-Сделать:
+To do:
 
-- читать `.isUbiquitousItemKey`;
-- добавить helper для чтения resource values;
-- пропускать файлы, где `isUbiquitousItem != true`;
-- добавить статус `unknown`, если metadata неполная.
+- read `.isUbiquitousItemKey`;
+- add a helper for reading resource values;
+- skip files where `isUbiquitousItem != true`;
+- add an `unknown` status when metadata is incomplete.
 
-Готово, если:
+Done when:
 
-- обычные локальные файлы не попадают в список кандидатов;
-- iCloud-файлы распознаются;
-- metadata errors отображаются или логируются как skipped.
+- regular local files do not appear in the candidate list;
+- iCloud files are recognized;
+- metadata errors are shown or logged as skipped.
 
-### 6. Фильтровать только локально скачанные файлы - готово
+### 6. Keep only locally downloaded files - done
 
-Цель: показывать только файлы, которые реально занимают место на Mac.
+Goal: show only files that actually take up space on the Mac.
 
-Статус: готово.
+Status: done.
 
-Сделано:
+Done:
 
-- сканер читает `.ubiquitousItemDownloadingStatusKey` и `.ubiquitousItemIsDownloadingKey`;
-- в список попадают только статусы `current` и `downloaded`;
-- cloud-only, downloading и unknown-файлы не показываются как кандидаты;
-- UI-тексты теперь говорят про локальные iCloud-файлы;
-- сводка показывает количество локальных iCloud-файлов и общий размер;
-- список сортируется по размеру: самые тяжелые сверху.
+- the scanner reads `.ubiquitousItemDownloadingStatusKey` and `.ubiquitousItemIsDownloadingKey`;
+- only the `current` and `downloaded` statuses make it into the list;
+- cloud-only, downloading, and unknown files are not shown as candidates;
+- UI copy now talks about local iCloud files;
+- the summary shows the number of local iCloud files and their total size;
+- the list is sorted by size, largest first.
 
-Сделать:
+To do:
 
-- использовать `.ubiquitousItemDownloadingStatusKey` и/или `.ubiquitousItemIsDownloadedKey`;
-- определить правило `isEvictableCandidate`;
-- показывать в таблице только кандидаты на выгрузку;
-- добавить счетчик "найдено".
+- use `.ubiquitousItemDownloadingStatusKey` and/or `.ubiquitousItemIsDownloadedKey`;
+- define the `isEvictableCandidate` rule;
+- show only eviction candidates in the table;
+- add a "found" counter.
 
-Готово, если:
+Done when:
 
-- уже выгруженные cloud-only файлы не попадают в основной список;
-- локально скачанные iCloud-файлы попадают;
-- спорные/unknown файлы не выгружаются автоматически.
+- already evicted cloud-only files do not appear in the main list;
+- locally downloaded iCloud files do appear;
+- ambiguous/unknown files are never evicted automatically.
 
-### 7. Добавить таблицу файлов - готово
+### 7. Add the file table - done
 
-Цель: пользователь видит найденные файлы в удобной таблице.
+Goal: the user sees the found files in a convenient table.
 
-Статус: готово.
+Status: done.
 
-Сделано:
+Done:
 
-- найденные локальные iCloud-файлы отображаются через `Table`;
-- показываются имя, относительный путь, размер и статус;
-- добавлена колонка даты изменения;
-- добавлено форматирование размера файла;
-- добавлено пустое состояние.
-- длинные имена и пути обрезаются по середине, полный путь доступен через help.
+- found local iCloud files are shown in a `Table`;
+- name, relative path, size, and status are shown;
+- added a modification date column;
+- added file size formatting;
+- added an empty state;
+- long names and paths are truncated in the middle; the full path is available as help text.
 
-Сделать:
+To do:
 
-- заменить пустой экран на `Table` или `List`;
-- показать имя, относительный путь, размер, дату изменения, статус;
-- добавить форматирование размера файла;
-- добавить пустое состояние для "ничего не найдено".
+- replace the empty screen with a `Table` or `List`;
+- show name, relative path, size, modification date, and status;
+- add file size formatting;
+- add an empty state for "nothing found".
 
-Готово, если:
+Done when:
 
-- найденные файлы отображаются;
-- длинные пути не ломают верстку;
-- приложение выглядит как рабочая macOS-утилита.
+- found files are displayed;
+- long paths do not break the layout;
+- the app looks like a working macOS utility.
 
-### 8. Добавить выбор файлов - готово
+### 8. Add file selection - done
 
-Цель: пользователь может выбрать конкретные файлы для выгрузки.
+Goal: the user can pick specific files to evict.
 
-Статус: готово.
+Status: done.
 
-Сделано:
+Done:
 
-- `Table` подключена к `selectedFileIDs`, можно выбирать строки стандартным macOS selection.
-- добавлены кнопки "Выбрать все" и "Снять выбор";
-- показывается выбранное количество и общий размер;
-- после выбора новой папки или пересканирования выбор очищается.
+- the `Table` is bound to `selectedFileIDs`, so rows can be selected with standard macOS selection;
+- added "Select All" and "Deselect All" buttons;
+- the selected count and total size are shown;
+- selection is cleared after picking a new folder or rescanning.
 
-Сделать:
+To do:
 
-- хранить `Set<CloudFile.ID>` выбранных файлов;
-- добавить checkbox или table selection;
-- добавить "Выбрать все" и "Снять выбор";
-- показывать выбранное количество и общий размер.
+- store a `Set<CloudFile.ID>` of selected files;
+- add checkboxes or table selection;
+- add "Select All" and "Deselect All";
+- show the selected count and total size.
 
-Готово, если:
+Done when:
 
-- можно выбрать один, несколько или все файлы;
-- счетчики обновляются;
-- после пересканирования выбор не содержит несуществующих id.
+- one, several, or all files can be selected;
+- the counters update;
+- after a rescan, the selection contains no ids that no longer exist.
 
-### 9. Реализовать выгрузку одного файла - готово
+### 9. Implement evicting a single file - done
 
-Цель: доказать основную операцию на одном выбранном файле.
+Goal: prove the core operation on one selected file.
 
-Статус: готово.
+Status: done.
 
-Сделано:
+Done:
 
-- добавлен `CloudFileEvictor.swift`;
-- перед выгрузкой файл повторно проверяется как iCloud item;
-- директории, cloud-only файлы и файлы в активной загрузке не выгружаются;
-- используется `FileManager.default.evictUbiquitousItem(at:)`;
-- UI показывает кнопку "Выгрузить выбранный" только для одного выбранного файла;
-- таблица показывает результат выгрузки по файлу.
+- added `CloudFileEvictor.swift`;
+- before eviction, the file is re-checked as an iCloud item;
+- directories, cloud-only files, and files being downloaded are not evicted;
+- uses `FileManager.default.evictUbiquitousItem(at:)`;
+- the UI shows the "Evict Selected" button only when exactly one file is selected;
+- the table shows the eviction result per file.
 
-Сделать:
+To do:
 
-- создать `CloudFileEvictor.swift`;
-- вызвать `FileManager.default.evictUbiquitousItem(at:)`;
-- перед вызовом повторно проверить, что файл iCloud item;
-- вернуть `EvictionResult`.
+- create `CloudFileEvictor.swift`;
+- call `FileManager.default.evictUbiquitousItem(at:)`;
+- re-check that the file is an iCloud item before the call;
+- return an `EvictionResult`.
 
-Готово, если:
+Done when:
 
-- один выбранный файл можно выгрузить;
-- успех/ошибка отображается в UI;
-- файл не удаляется из iCloud.
+- one selected file can be evicted;
+- success/error is shown in the UI;
+- the file is not deleted from iCloud.
 
-### 10. Реализовать массовую выгрузку
+### 10. Implement bulk eviction
 
-Цель: применить выгрузку ко всем выбранным файлам.
+Goal: apply eviction to all selected files.
 
-Сделать:
+To do:
 
-- обрабатывать выбранные файлы последовательно или с ограниченной concurrency;
-- показывать progress;
-- не останавливать всю операцию из-за ошибки одного файла;
-- обновлять результат каждого файла.
+- process selected files sequentially or with limited concurrency;
+- show progress;
+- do not stop the whole operation because one file failed;
+- update each file's result.
 
-Готово, если:
+Done when:
 
-- можно выгрузить несколько файлов за один запуск;
-- UI остается отзывчивым;
-- пользователь видит итог: сколько успешно, сколько с ошибкой.
+- several files can be evicted in one run;
+- the UI stays responsive;
+- the user sees the outcome: how many succeeded and how many failed.
 
-### 11. Добавить подтверждение перед массовым действием
+### 11. Add confirmation before a bulk action
 
-Цель: снизить риск случайной операции.
+Goal: reduce the risk of an accidental operation.
 
-Сделать:
+To do:
 
-- перед выгрузкой показывать `Alert`;
-- указать количество файлов и общий размер;
-- явно назвать действие: "локальные копии будут удалены с этого Mac, файлы останутся в iCloud";
-- кнопки: "Отмена" и "Освободить место".
+- show an `Alert` before evicting;
+- state the number of files and the total size;
+- name the action explicitly: "local copies will be removed from this Mac, the files stay in iCloud";
+- buttons: "Cancel" and "Free Up Space".
 
-Готово, если:
+Done when:
 
-- действие нельзя запустить случайным одиночным кликом;
-- текст не путает выгрузку с удалением файла.
+- the action cannot be triggered by a single accidental click;
+- the copy does not confuse eviction with deleting the file.
 
-### 12. Пересканирование после выгрузки
+### 12. Rescan after eviction
 
-Цель: список отражает актуальное состояние.
+Goal: the list reflects the current state.
 
-Сделать:
+To do:
 
-- после успешной массовой выгрузки предложить пересканировать или сделать это автоматически;
-- убрать успешно выгруженные файлы из списка кандидатов;
-- сохранить ошибки в видимой форме.
+- after a successful bulk eviction, offer to rescan or do it automatically;
+- remove successfully evicted files from the candidate list;
+- keep errors visible.
 
-Готово, если:
+Done when:
 
-- успешно выгруженные файлы исчезают из списка после refresh;
-- ошибки остаются понятными;
-- счетчики корректны.
+- successfully evicted files disappear from the list after a refresh;
+- errors stay understandable;
+- the counters are correct.
 
-### 13. Сохранить выбранную папку между запусками
+### 13. Remember the selected folder between launches
 
-Цель: приложение помнит последнюю папку.
+Goal: the app remembers the last folder.
 
-Статус: частично готово.
+Status: partially done.
 
-Уже сделано:
+Already done:
 
-- последняя выбранная папка сохраняется security-scoped bookmark;
-- при запуске приложение пытается восстановить последнюю папку;
-- последний найденный список файлов сохраняется в кеш и показывается сразу после запуска;
-- автоматический полный scan при запуске не выполняется: пользователь может нажать "Обновить".
+- the last selected folder is saved as a security-scoped bookmark;
+- on launch the app tries to restore the last folder;
+- the last found file list is cached and shown right after launch;
+- no automatic full scan runs on launch: the user can press "Refresh".
 
-Осталось:
+Remaining:
 
-- лучше обработать stale bookmark и показать явную просьбу выбрать папку заново;
-- добавить отдельную очистку кеша при необходимости.
+- handle a stale bookmark better and explicitly ask the user to pick the folder again;
+- add a separate cache reset if needed.
 
-Сделать:
+To do:
 
-- создать security-scoped bookmark;
-- сохранить bookmark в `UserDefaults` или маленьком settings-хранилище;
-- восстановить доступ при запуске;
-- обработать stale bookmark.
+- create a security-scoped bookmark;
+- store the bookmark in `UserDefaults` or a small settings store;
+- restore access on launch;
+- handle a stale bookmark.
 
-Готово, если:
+Done when:
 
-- после перезапуска приложение показывает последнюю папку;
-- сканирование работает без повторного выбора, если доступ валиден;
-- при stale/invalid bookmark пользователь видит просьбу выбрать папку заново.
+- after a relaunch the app shows the last folder;
+- scanning works without picking the folder again if access is still valid;
+- with a stale/invalid bookmark the user is asked to pick the folder again.
 
-### 14. Добавить отмену сканирования - готово
+### 14. Add scan cancellation - done
 
-Цель: не заставлять ждать на больших папках.
+Goal: do not make the user wait on large folders.
 
-Статус: готово.
+Status: done.
 
-Сделано:
+Done:
 
-- view model хранит текущую `scanTask`;
-- рабочая task сканирования отменяется напрямую, без вложенного unstructured `Task.detached`;
-- при новом сканировании предыдущая task отменяется;
-- старые результаты после отмены игнорируются через generation guard;
-- добавлена кнопка "Остановить";
-- сканер проверяет `Task.checkCancellation()` во время обхода.
+- the view model keeps the current `scanTask`;
+- the scan worker task is cancelled directly, without a nested unstructured `Task.detached`;
+- starting a new scan cancels the previous task;
+- stale results after cancellation are ignored through a generation guard;
+- added a "Stop" button;
+- the scanner calls `Task.checkCancellation()` during traversal.
 
-Сделать:
+To do:
 
-- перевести сканирование на `Task`;
-- хранить текущую scan task;
-- добавить кнопку "Остановить";
-- проверять `Task.isCancelled` во время обхода.
+- move scanning to a `Task`;
+- keep the current scan task;
+- add a "Stop" button;
+- check `Task.isCancelled` during traversal.
 
-Готово, если:
+Done when:
 
-- сканирование можно остановить;
-- после отмены приложение остается в нормальном состоянии;
-- можно запустить scan заново.
+- the scan can be stopped;
+- after cancelling, the app stays in a normal state;
+- a scan can be started again.
 
-### 15. Улучшить обработку больших папок - частично готово
+### 15. Improve handling of large folders - partially done
 
-Цель: приложение не выглядит зависшим на тысячах файлов.
+Goal: the app does not look frozen on thousands of files.
 
-Статус: частично готово.
+Status: partially done.
 
-Уже сделано:
+Already done:
 
-- UI получает progress во время сканирования;
-- показывается количество проверенных файлов;
-- статус показывает найденных кандидатов во время обхода.
-- найденные кандидаты добавляются в таблицу батчами во время scan, не только в конце;
-- если кандидаты уже найдены, таблица остается видимой во время продолжающегося scan.
-- основной быстрый scan переведен на `NSMetadataQuery`, чтобы использовать Spotlight metadata index вместо ручного чтения каждого файла;
-- добавлен ручной fallback "Полное сканирование" через `FileManager.enumerator`;
-- последний результат кешируется и показывается мгновенно при следующем запуске.
+- the UI receives progress during the scan;
+- the number of checked files is shown;
+- the status shows the candidates found during traversal;
+- found candidates are added to the table in batches during the scan, not only at the end;
+- if candidates have already been found, the table stays visible while the scan continues;
+- the main fast scan moved to `NSMetadataQuery` to use the Spotlight metadata index instead of reading every file by hand;
+- added a manual "Full Scan" fallback using `FileManager.enumerator`;
+- the last result is cached and shown instantly on the next launch.
 
-Осталось:
+Remaining:
 
-- при необходимости обновлять найденные файлы батчами до завершения scan;
-- замерить поведение на реальной большой iCloud-папке;
-- подумать над ограничениями глубины/исключениями для очень больших деревьев.
+- if needed, update found files in batches before the scan finishes;
+- measure the behavior on a real large iCloud folder;
+- consider depth limits or exclusions for very large trees.
 
-Сделать:
+To do:
 
-- обновлять UI батчами;
-- показывать текущий прогресс хотя бы текстом: "Просканировано N файлов";
-- не хранить лишнюю тяжелую metadata;
-- замерить поведение на большой папке.
+- update the UI in batches;
+- show the current progress at least as text: "Scanned N files";
+- do not keep unnecessary heavy metadata;
+- measure the behavior on a large folder.
 
-Готово, если:
+Done when:
 
-- UI не фризится заметно;
-- пользователь понимает, что scan идет;
-- память не растет бесконтрольно.
+- the UI does not noticeably freeze;
+- the user understands that the scan is running;
+- memory does not grow without bound.
 
-### 16. Добавить сортировку и фильтры - частично готово
+### 16. Add sorting and filters - partially done
 
-Цель: пользователь быстрее находит крупные и старые файлы.
+Goal: the user finds large and old files faster.
 
-Статус: частично готово.
+Status: partially done.
 
-Уже сделано:
+Already done:
 
-- список сортируется по размеру: самые тяжелые файлы сверху.
+- the list is sorted by size, largest files first.
 
-Осталось:
+Remaining:
 
-- добавить пользовательскую сортировку по размеру, дате, имени, пути;
-- добавить поиск по имени/пути;
-- сохранить выбор файлов при фильтрации после задачи 8.
+- add user-selectable sorting by size, date, name, and path;
+- add search by name/path;
+- keep the file selection while filtering (after task 8).
 
-Сделать:
+To do:
 
-- сортировка по размеру, дате, имени, пути;
-- фильтр по расширению или строке поиска;
-- быстрый фильтр "больше N MB" можно оставить на потом.
+- sorting by size, date, name, and path;
+- filter by extension or search string;
+- a quick "larger than N MB" filter can wait.
 
-Готово, если:
+Done when:
 
-- таблицу можно отсортировать по размеру;
-- поиск по имени/пути работает;
-- выбор файлов сохраняется при фильтрации.
+- the table can be sorted by size;
+- search by name/path works;
+- the file selection is kept while filtering.
 
-### 17. Добавить тесты для чистой логики
+### 17. Add tests for pure logic
 
-Цель: закрепить правила отбора кандидатов.
+Goal: lock in the candidate selection rules.
 
-Сделать:
+To do:
 
-- вынести `isEvictableCandidate` в тестируемый helper;
-- добавить unit tests для статусов;
-- добавить tests для форматирования размера;
-- добавить tests для обновления selection после refresh.
+- extract `isEvictableCandidate` into a testable helper;
+- add unit tests for the statuses;
+- add tests for size formatting;
+- add tests for updating the selection after a refresh.
 
-Готово, если:
+Done when:
 
-- тесты запускаются через Xcode/xcodebuild;
-- основная логика фильтрации покрыта;
-- UI и реальный iCloud API можно пока не мокать глубоко.
+- tests run through Xcode/xcodebuild;
+- the core filtering logic is covered;
+- the UI and the real iCloud API do not need deep mocking yet.
 
-### 18. Проверить sandbox/capabilities
+### 18. Check sandbox/capabilities
 
-Цель: убедиться, что настройки приложения соответствуют доступу к файлам.
+Goal: make sure the app settings match its file access.
 
-Сделать:
+To do:
 
-- проверить App Sandbox entitlement;
-- проверить User Selected File read/write entitlement;
-- определить, нужен ли iCloud Documents entitlement для этого подхода;
-- зафиксировать итог в `SPEC.md` или отдельном `NOTES.md`.
+- check the App Sandbox entitlement;
+- check the User Selected File read/write entitlement;
+- decide whether the iCloud Documents entitlement is needed for this approach;
+- record the outcome in `SPEC.md` or a separate `NOTES.md`.
 
-Готово, если:
+Done when:
 
-- приложение работает с выбранной папкой в sandbox;
-- entitlements понятны и минимальны;
-- нет лишних широких разрешений.
+- the app works with the selected folder in the sandbox;
+- the entitlements are understood and minimal;
+- there are no unnecessary broad permissions.
 
-### 19. Полировка первого релиза
+### 19. Polish the first release
 
-Цель: сделать MVP приятным для реального использования.
+Goal: make the MVP pleasant for real use.
 
-Сделать:
+To do:
 
-- нормальные названия кнопок;
-- аккуратные empty/error/loading states;
-- disabled states для невозможных действий;
-- app icon можно оставить отдельной задачей;
-- проверить темную и светлую тему.
+- proper button titles;
+- tidy empty/error/loading states;
+- disabled states for impossible actions;
+- the app icon can be a separate task;
+- check dark and light appearance.
 
-Готово, если:
+Done when:
 
-- приложение можно дать другому человеку без устного объяснения;
-- опасное действие сформулировано ясно;
-- основной сценарий проходит от выбора папки до результата.
+- the app can be handed to another person without a verbal explanation;
+- the destructive action is worded clearly;
+- the main flow works from picking a folder to seeing the result.
 
-### 20. Подготовить ручной тест-план
+### 20. Prepare a manual test plan
 
-Цель: иметь чеклист перед каждым крупным изменением.
+Goal: have a checklist to run before every major change.
 
-Сделать:
+To do:
 
-- создать `TEST_PLAN.md`;
-- описать тест с маленькой папкой iCloud;
-- описать тест с обычной локальной папкой;
-- описать тест отмены выбора/сканирования;
-- описать тест ошибок доступа.
+- create `TEST_PLAN.md`;
+- describe a test with a small iCloud folder;
+- describe a test with a regular local folder;
+- describe a test for cancelling the picker and the scan;
+- describe a test for access errors.
 
-Готово, если:
+Done when:
 
-- тест-план можно выполнить вручную за 5-10 минут;
-- есть проверка, что файлы не удаляются из iCloud.
+- the test plan can be run by hand in 5-10 minutes;
+- it checks that files are not deleted from iCloud.
 
-## Текущий статус
+## Current Status
 
-Готово:
+Done:
 
-- задача 1: модели и view model;
-- задача 2: выбор папки;
-- задача 3: security-scoped доступ на время сессии;
-- задача 4: рекурсивный обход;
-- задача 5: распознавание iCloud/ubiquitous файлов;
-- задача 6: фильтр локально скачанных iCloud-файлов;
-- задача 7: таблица файлов, размер, дата изменения, статус, empty state;
-- задача 8: выбор строк в таблице, "Выбрать все", "Снять выбор", сводка выбранного размера;
-- задача 9: выгрузка одного выбранного файла;
-- часть задачи 13: сохранение последней папки и кеша списка файлов;
-- задача 14: отмена сканирования;
-- часть задачи 15: быстрый `NSMetadataQuery` scan, cache-first UI, progress во время сканирования больших папок;
-- часть задачи 16: сортировка по размеру, самые тяжелые сверху.
+- task 1: models and view model;
+- task 2: folder selection;
+- task 3: security-scoped access for the session;
+- task 4: recursive traversal;
+- task 5: recognizing iCloud/ubiquitous files;
+- task 6: filtering locally downloaded iCloud files;
+- task 7: file table, size, modification date, status, empty state;
+- task 8: table row selection, "Select All", "Deselect All", selected size summary;
+- task 9: evicting one selected file;
+- part of task 13: remembering the last folder and caching the file list;
+- task 14: scan cancellation;
+- part of task 15: fast `NSMetadataQuery` scan, cache-first UI, progress while scanning large folders;
+- part of task 16: sorting by size, largest first.
 
-Текущая сборочная проверка:
+Current build check:
 
 ```sh
 xcodebuild -project CloudeRm.xcodeproj -scheme CloudeRm -configuration Debug -derivedDataPath /private/tmp/CloudeRm-DerivedData CODE_SIGNING_ALLOWED=NO build
 ```
 
-Последний результат: `BUILD SUCCEEDED`.
+Last result: `BUILD SUCCEEDED`.
 
-Обычная signed-сборка может зависеть от локального `Mac Development` сертификата.
+A regular signed build may depend on a local `Mac Development` certificate.
 
-## Рекомендуемый порядок следующих сессий
+## Recommended Order for the Next Sessions
 
-1. Задача 10: массовая выгрузка.
-2. Задача 11: подтверждение перед массовым действием.
-3. Задача 12: пересканирование после выгрузки.
-4. Задача 13: сохранение выбранной папки между запусками.
+1. Task 10: bulk eviction.
+2. Task 11: confirmation before a bulk action.
+3. Task 12: rescan after eviction.
+4. Task 13: remember the selected folder between launches.
 
-## Риски и вопросы
+## Risks and Open Questions
 
-- Некоторые iCloud metadata values могут возвращать `nil` или устаревшее состояние.
-- Finder и система могут автоматически скачать файл снова, если он нужен.
-- На разных версиях macOS поведение `ubiquitousItemDownloadingStatus` может отличаться.
-- Для App Store могут понадобиться отдельные проверки entitlements и sandbox-поведения.
-- Нужно тестировать только на реальной iCloud Drive папке, не на синтетической локальной папке.
+- Some iCloud metadata values may return `nil` or a stale state.
+- Finder and the system may download a file again automatically if it is needed.
+- The behavior of `ubiquitousItemDownloadingStatus` may differ between macOS versions.
+- The App Store may require separate checks of entitlements and sandbox behavior.
+- Testing must happen only on a real iCloud Drive folder, not on a synthetic local folder.
 
-## Команда для новой сессии
+## Prompt for a New Session
 
-Пример запроса:
+Example request:
 
 ```text
-Открой SPEC.md и выполни задачу 1. Ничего лишнего пока не делай.
+Open SPEC.md and do task 1. Don't do anything extra yet.
 ```
 
-Или:
+Or:
 
 ```text
-Открой SPEC.md, посмотри текущий код и продолжи со следующей невыполненной задачи.
+Open SPEC.md, look at the current code, and continue with the next unfinished task.
 ```

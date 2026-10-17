@@ -14,7 +14,7 @@ enum CloudFileScanner {
         var errorDescription: String? {
             switch self {
             case .unableToCreateEnumerator:
-                "Не удалось начать сканирование выбранной папки."
+                "Could not start scanning the selected folder."
             }
         }
     }

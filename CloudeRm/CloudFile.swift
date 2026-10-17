@@ -136,15 +136,15 @@ nonisolated enum CloudDownloadStatus: String, Codable, Hashable, Sendable {
     nonisolated var displayName: String {
         switch self {
         case .downloaded:
-            "Скачан"
+            "Downloaded"
         case .notDownloaded:
-            "Только iCloud"
+            "iCloud Only"
         case .current:
-            "Актуален"
+            "Up to Date"
         case .downloading:
-            "Загружается"
+            "Downloading"
         case .unknown:
-            "Неизвестно"
+            "Unknown"
         }
     }
 }

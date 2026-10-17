@@ -20,9 +20,9 @@ nonisolated enum CloudFileDiskScanner {
         var errorDescription: String? {
             switch self {
             case .folderIsNotInICloud:
-                "Выбранная папка не находится в iCloud Drive."
+                "The selected folder is not in iCloud Drive."
             case .unableToReadFolder(let reason):
-                "Не удалось прочитать папку: \(reason)"
+                "Could not read the folder: \(reason)"
             }
         }
     }

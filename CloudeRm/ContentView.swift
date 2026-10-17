@@ -4,12 +4,26 @@
 //
 //  Created by olchu on 28. 5. 2026..
 //
+//  Copyright © 2026 olchu. All rights reserved.
+//
+//  This file is NOT covered by the MIT License in LICENSE. It defines the
+//  app's visual design and may not be copied, modified or redistributed
+//  without permission. See NOTICE.md.
+//
 
 import SwiftUI
 
 struct ContentView: View {
-    @State private var viewModel = CloudFilesViewModel()
+    @State private var viewModel: CloudFilesViewModel
     @State private var isConfirmingFolderEviction = false
+
+    init() {
+        self.init(viewModel: CloudFilesViewModel())
+    }
+
+    init(viewModel: CloudFilesViewModel) {
+        _viewModel = State(initialValue: viewModel)
+    }
 
     var body: some View {
         ZStack {
@@ -29,14 +43,14 @@ struct ContentView: View {
         .preferredColorScheme(.dark)
         .environment(\.font, .system(size: 13, design: .monospaced))
         .frame(minWidth: 900, minHeight: 680)
-        .alert("Выгрузить локальные копии?", isPresented: $isConfirmingFolderEviction) {
-            Button("Отмена", role: .cancel) {}
-            Button("Выгрузить", role: .destructive) {
+        .alert("Remove Local Copies?", isPresented: $isConfirmingFolderEviction) {
+            Button("Cancel", role: .cancel) {}
+            Button("Remove", role: .destructive) {
                 viewModel.evictCurrentFolderLocalCopies()
             }
         } message: {
             if let folder = viewModel.currentFolder {
-                Text("Файлы останутся в iCloud, но локальная копия папки \(folder.name) будет удалена с этого Mac.")
+                Text("The files stay in iCloud, but the local copy of \(folder.name) will be removed from this Mac.")
             }
         }
     }
@@ -209,7 +223,7 @@ struct ContentView: View {
 
                     if viewModel.derived.levelCloudOnlyFileCount > 0 {
                         Label(
-                            "Ещё \(viewModel.derived.levelCloudOnlyFileCount) в iCloud • \(byteCountText(viewModel.derived.levelCloudOnlyByteSize))",
+                            "\(viewModel.derived.levelCloudOnlyFileCount) more in iCloud • \(byteCountText(viewModel.derived.levelCloudOnlyByteSize))",
                             systemImage: "icloud"
                         )
                         .font(.caption)
@@ -235,7 +249,7 @@ struct ContentView: View {
             }
             .buttonStyle(IconButtonStyle())
             .keyboardShortcut("[", modifiers: .command)
-            .help("Назад")
+            .help("Back")
 
             ScrollView(.horizontal) {
                 HStack(spacing: 6) {
@@ -297,7 +311,7 @@ struct ContentView: View {
             Text(viewModel.statusMessage)
                 .font(.title3.weight(.semibold))
 
-            Text("Проверено файлов: \(viewModel.scannedFileCount)")
+            Text("Files checked: \(viewModel.scannedFileCount)")
                 .font(.callout)
                 .foregroundStyle(AppPalette.secondaryText)
                 .monospacedDigit()
@@ -305,7 +319,7 @@ struct ContentView: View {
             Button {
                 viewModel.cancelScan()
             } label: {
-                Label("Остановить сканирование", systemImage: "stop.circle")
+                Label("Stop Scan", systemImage: "stop.circle")
             }
             .buttonStyle(SecondaryButtonStyle())
         }
@@ -524,7 +538,7 @@ private struct FolderFileRow: View {
                 .frame(width: 76, alignment: .trailing)
                 .help(fileSizeHelpText)
 
-            Text(isEvicting ? "Выгружается" : file.downloadStatus.displayName)
+            Text(isEvicting ? "Removing" : file.downloadStatus.displayName)
                 .font(.caption)
                 .foregroundStyle(isEvicting ? AppPalette.accent : statusTint)
                 .frame(width: 92, alignment: .trailing)
@@ -541,7 +555,7 @@ private struct FolderFileRow: View {
                 }
                 .buttonStyle(IconButtonStyle())
                 .disabled(!file.downloadStatus.isStoredLocally)
-                .help(file.downloadStatus.isStoredLocally ? "Выгрузить локальную копию" : "Файл уже только в iCloud")
+                .help(file.downloadStatus.isStoredLocally ? "Remove local copy" : "The file is already iCloud-only")
             }
         }
         .padding(.horizontal, 10)
@@ -558,7 +572,7 @@ private struct FolderFileRow: View {
     private var fileSizeHelpText: String {
         let local = byteCountText(file.localByteSize)
         let cloud = byteCountText(file.byteSize)
-        return "На Mac: \(local) • Размер файла: \(cloud)"
+        return "On Mac: \(local) • File size: \(cloud)"
     }
 }
 
@@ -571,7 +585,7 @@ private struct EvictionBanner: View {
                 Image(systemName: "icloud.and.arrow.up")
                     .foregroundStyle(AppPalette.accent)
 
-                Text("Выгружаем локальные копии")
+                Text("Removing local copies")
                     .font(.callout.weight(.semibold))
 
                 Spacer()
@@ -582,12 +596,10 @@ private struct EvictionBanner: View {
                     .monospacedDigit()
             }
 
-            ProgressView(value: progress.fraction)
-                .progressViewStyle(.linear)
-                .tint(AppPalette.accent)
+            ProgressBar(value: progress.fraction, tint: AppPalette.accent)
                 .animation(.easeOut(duration: 0.2), value: progress.fraction)
 
-            Text("Освобождено \(byteCountText(progress.freedByteSize)) из \(byteCountText(progress.totalByteSize))")
+            Text("\(byteCountText(progress.freedByteSize)) of \(byteCountText(progress.totalByteSize)) freed")
                 .font(.caption)
                 .foregroundStyle(AppPalette.secondaryText)
                 .monospacedDigit()
@@ -688,9 +700,7 @@ private struct FolderDetailsPanel: View {
                 storageMetric("In Cloud", byteCountText(folder.cloudByteSize), AppPalette.primaryText)
             }
 
-            ProgressView(value: folder.downloadedFraction)
-                .progressViewStyle(.linear)
-                .tint(folder.downloadState.tint)
+            ProgressBar(value: folder.downloadedFraction, tint: folder.downloadState.tint)
 
             Text(folder.downloadedFraction.formatted(.percent.precision(.fractionLength(0))) + " downloaded")
                 .font(.caption)
@@ -724,6 +734,25 @@ private struct FolderDetailsPanel: View {
                 .multilineTextAlignment(.trailing)
         }
         .font(.callout)
+    }
+}
+
+/// Thin capsule bar; unlike the system one it keeps its tint in inactive windows.
+private struct ProgressBar: View {
+    let value: Double
+    let tint: Color
+
+    var body: some View {
+        Capsule()
+            .fill(AppPalette.stroke)
+            .overlay(alignment: .leading) {
+                GeometryReader { proxy in
+                    Capsule()
+                        .fill(tint)
+                        .frame(width: proxy.size.width * min(max(value, 0), 1))
+                }
+            }
+            .frame(height: 6)
     }
 }
 

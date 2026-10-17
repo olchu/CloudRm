@@ -15,7 +15,7 @@ enum FileAccess {
         var errorDescription: String? {
             switch self {
             case .selectedItemIsNotFolder:
-                "Выбранный объект не является папкой."
+                "The selected item is not a folder."
             }
         }
     }
@@ -38,9 +38,9 @@ enum FileAccess {
     @MainActor
     private static func selectFolder(startingAt directoryURL: URL?) -> URL? {
         let panel = NSOpenPanel()
-        panel.title = "Выберите папку iCloud Drive"
-        panel.message = "Выберите папку, в которой CloudeRm будет искать локально скачанные iCloud-файлы."
-        panel.prompt = "Выбрать"
+        panel.title = "Choose an iCloud Drive Folder"
+        panel.message = "Choose the folder where CloudeRm should look for downloaded iCloud files."
+        panel.prompt = "Choose"
         panel.directoryURL = directoryURL
         panel.canChooseFiles = false
         panel.canChooseDirectories = true

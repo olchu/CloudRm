@@ -17,13 +17,13 @@ enum CloudFileEvictor {
         var errorDescription: String? {
             switch self {
             case .selectedItemIsDirectory:
-                "это папка"
+                "The item is a folder."
             case .selectedItemIsNotICloudFile:
-                "это не iCloud-файл"
+                "The item is not an iCloud file."
             case .fileIsDownloading:
-                "файл сейчас загружается"
+                "The file is still downloading."
             case .fileIsNotStoredLocally:
-                "локальной копии уже нет"
+                "There is no local copy anymore."
             }
         }
     }
