@@ -150,21 +150,10 @@ nonisolated enum CloudFileDiskScanner {
                     if isPackage(path: path, name: entry.name) {
                         output.scannedFileCount += 1
                         let usage = packageUsage(atPath: path, reader: reader)
-                        let package = packageFile(entry: entry, path: path, relativePath: relativePath, usage: usage)
-                        if usage.hasLocalContent, !isUbiquitous(package.url) {
-                            output.addNotSynced(package)
-                            return
-                        }
-
-                        output.directoryTotals.addFile(
-                            relativePath: relativePath,
-                            byteSize: usage.logicalSize,
-                            isLocal: usage.hasLocalContent,
-                            modificationDate: entry.modificationDate
+                        output.record(
+                            packageFile(entry: entry, path: path, relativePath: relativePath, usage: usage),
+                            isLocal: usage.hasLocalContent
                         )
-                        if usage.hasLocalContent {
-                            output.files.append(package)
-                        }
                     } else {
                         output.directoryTotals.addSubfolder(relativePath: relativePath)
                         output.subdirectories.append(PendingDirectory(path: path, relativePath: relativePath))
@@ -181,29 +170,18 @@ nonisolated enum CloudFileDiskScanner {
                         return
                     }
 
-                    let file = CloudFile(
-                        url: URL(fileURLWithPath: path, isDirectory: false),
-                        displayName: entry.name,
-                        relativePath: relativePath,
-                        byteSize: entry.logicalSize,
-                        allocatedByteSize: entry.allocatedSize,
-                        modificationDate: entry.modificationDate,
-                        downloadStatus: .downloaded
+                    output.record(
+                        CloudFile(
+                            url: URL(fileURLWithPath: path, isDirectory: false),
+                            displayName: entry.name,
+                            relativePath: relativePath,
+                            byteSize: entry.logicalSize,
+                            allocatedByteSize: entry.allocatedSize,
+                            modificationDate: entry.modificationDate,
+                            downloadStatus: .downloaded
+                        ),
+                        isLocal: true
                     )
-                    // iCloud leaves some files local-only (Thumbs.db, .tmp,
-                    // photo libraries), and they cannot be evicted.
-                    guard isUbiquitous(file.url) else {
-                        output.addNotSynced(file)
-                        return
-                    }
-
-                    output.directoryTotals.addFile(
-                        relativePath: relativePath,
-                        byteSize: entry.logicalSize,
-                        isLocal: true,
-                        modificationDate: entry.modificationDate
-                    )
-                    output.files.append(file)
                 }
             }
         } catch {
@@ -269,7 +247,7 @@ nonisolated enum CloudFileDiskScanner {
         return values?.isPackage == true
     }
 
-    private static func isUbiquitous(_ url: URL) -> Bool {
+    fileprivate static func isUbiquitous(_ url: URL) -> Bool {
         (try? url.resourceValues(forKeys: [.isUbiquitousItemKey]))?.isUbiquitousItem == true
     }
 }
@@ -290,9 +268,25 @@ nonisolated private struct DirectoryOutput {
     var notSyncedFileCount = 0
     var notSyncedByteSize: Int64 = 0
 
-    mutating func addNotSynced(_ file: CloudFile) {
-        notSyncedFileCount += 1
-        notSyncedByteSize += file.localByteSize
+    /// Counts the item in the folder totals and keeps it when it is local.
+    /// iCloud leaves some local items unsynced (Thumbs.db, .tmp, photo
+    /// libraries); they cannot be evicted, so they are only counted apart.
+    mutating func record(_ file: CloudFile, isLocal: Bool) {
+        if isLocal, !CloudFileDiskScanner.isUbiquitous(file.url) {
+            notSyncedFileCount += 1
+            notSyncedByteSize += file.localByteSize
+            return
+        }
+
+        directoryTotals.addFile(
+            relativePath: file.relativePath,
+            byteSize: file.byteSize ?? 0,
+            isLocal: isLocal,
+            modificationDate: file.modificationDate
+        )
+        if isLocal {
+            files.append(file)
+        }
     }
 }
 

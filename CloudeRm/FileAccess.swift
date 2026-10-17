@@ -11,17 +11,11 @@ import Foundation
 enum FileAccess {
     enum AccessError: LocalizedError, Sendable {
         case selectedItemIsNotFolder
-        case unableToCreateBookmark
-        case unableToResolveBookmark
 
         var errorDescription: String? {
             switch self {
             case .selectedItemIsNotFolder:
                 "Выбранный объект не является папкой."
-            case .unableToCreateBookmark:
-                "Не удалось сохранить доступ к выбранной папке."
-            case .unableToResolveBookmark:
-                "Не удалось восстановить доступ к последней папке."
             }
         }
     }
@@ -65,49 +59,43 @@ enum FileAccess {
         }
     }
 
+    /// Runs `operation` inside the folder's security scope; a nil URL needs none.
     nonisolated static func withSecurityScopedAccess<Result>(
-        to url: URL,
+        to url: URL?,
         perform operation: () throws -> Result
     ) rethrows -> Result {
-        let didStartAccess = url.startAccessingSecurityScopedResource()
+        let didStartAccess = url?.startAccessingSecurityScopedResource() == true
         defer {
             if didStartAccess {
-                url.stopAccessingSecurityScopedResource()
+                url?.stopAccessingSecurityScopedResource()
             }
         }
 
         return try operation()
     }
 
-    nonisolated static func makeSecurityScopedBookmark(for url: URL) throws -> Data {
-        do {
-            return try url.bookmarkData(
-                options: [.withSecurityScope],
-                includingResourceValuesForKeys: nil,
-                relativeTo: nil
-            )
-        } catch {
-            throw AccessError.unableToCreateBookmark
-        }
+    nonisolated static func makeSecurityScopedBookmark(for url: URL) -> Data? {
+        try? url.bookmarkData(
+            options: [.withSecurityScope],
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        )
     }
 
-    nonisolated static func resolveSecurityScopedBookmark(_ bookmarkData: Data) throws -> URL {
-        do {
-            var isStale = false
-            let url = try URL(
+    nonisolated static func resolveSecurityScopedBookmark(_ bookmarkData: Data) -> URL? {
+        var isStale = false
+        guard
+            let url = try? URL(
                 resolvingBookmarkData: bookmarkData,
                 options: [.withSecurityScope],
                 relativeTo: nil,
                 bookmarkDataIsStale: &isStale
-            )
-
-            guard !isStale else {
-                throw AccessError.unableToResolveBookmark
-            }
-
-            return url
-        } catch {
-            throw AccessError.unableToResolveBookmark
+            ),
+            !isStale
+        else {
+            return nil
         }
+
+        return url
     }
 }

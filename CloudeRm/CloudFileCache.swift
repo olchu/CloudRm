@@ -15,45 +15,13 @@ nonisolated enum CloudFileCache {
     nonisolated struct Snapshot: Codable, Sendable {
         let folderPath: String
         let updatedAt: Date
-        let files: [CachedFile]
+        let files: [CloudFile]
         /// Missing in snapshots saved before per-directory totals were tracked.
         let directoryTotals: [String: CloudFolderTotal]?
     }
 
-    nonisolated struct CachedFile: Codable, Sendable {
-        let url: URL
-        let displayName: String
-        let relativePath: String
-        let byteSize: Int64?
-        let allocatedByteSize: Int64?
-        let modificationDate: Date?
-        let downloadStatusName: String
-
-        init(file: CloudFile) {
-            url = file.url
-            displayName = file.displayName
-            relativePath = file.relativePath
-            byteSize = file.byteSize
-            allocatedByteSize = file.allocatedByteSize
-            modificationDate = file.modificationDate
-            downloadStatusName = file.downloadStatus.cacheName
-        }
-
-        var cloudFile: CloudFile {
-            CloudFile(
-                url: url,
-                displayName: displayName,
-                relativePath: relativePath,
-                byteSize: byteSize,
-                allocatedByteSize: allocatedByteSize,
-                modificationDate: modificationDate,
-                downloadStatus: CloudDownloadStatus(cacheName: downloadStatusName)
-            )
-        }
-    }
-
     nonisolated static func saveLastFolder(_ folderURL: URL) {
-        guard let bookmarkData = try? FileAccess.makeSecurityScopedBookmark(for: folderURL) else {
+        guard let bookmarkData = FileAccess.makeSecurityScopedBookmark(for: folderURL) else {
             return
         }
 
@@ -65,14 +33,14 @@ nonisolated enum CloudFileCache {
             return nil
         }
 
-        return try? FileAccess.resolveSecurityScopedBookmark(bookmarkData)
+        return FileAccess.resolveSecurityScopedBookmark(bookmarkData)
     }
 
     nonisolated static func saveSnapshot(folderURL: URL, files: [CloudFile], directoryTotals: [String: CloudFolderTotal]) {
         let snapshot = Snapshot(
             folderPath: folderURL.standardizedFileURL.path(percentEncoded: false),
             updatedAt: Date(),
-            files: files.map(CachedFile.init(file:)),
+            files: files,
             directoryTotals: directoryTotals
         )
 
@@ -128,37 +96,5 @@ actor CloudFileCacheStore {
 
     func loadSnapshot(for folderURL: URL) -> CloudFileCache.Snapshot? {
         CloudFileCache.loadSnapshot(for: folderURL)
-    }
-}
-
-private extension CloudDownloadStatus {
-    nonisolated var cacheName: String {
-        switch self {
-        case .downloaded:
-            "downloaded"
-        case .notDownloaded:
-            "notDownloaded"
-        case .current:
-            "current"
-        case .downloading:
-            "downloading"
-        case .unknown:
-            "unknown"
-        }
-    }
-
-    nonisolated init(cacheName: String) {
-        switch cacheName {
-        case "downloaded":
-            self = .downloaded
-        case "notDownloaded":
-            self = .notDownloaded
-        case "current":
-            self = .current
-        case "downloading":
-            self = .downloading
-        default:
-            self = .unknown
-        }
     }
 }

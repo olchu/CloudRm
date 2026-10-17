@@ -7,8 +7,7 @@
 
 import Foundation
 
-nonisolated struct CloudFile: Identifiable, Hashable, Sendable {
-    let id: URL
+nonisolated struct CloudFile: Identifiable, Hashable, Codable, Sendable {
     let url: URL
     let displayName: String
     let relativePath: String
@@ -16,33 +15,19 @@ nonisolated struct CloudFile: Identifiable, Hashable, Sendable {
     let allocatedByteSize: Int64?
     let modificationDate: Date?
     let downloadStatus: CloudDownloadStatus
-    var evictionResult: EvictionResult?
 
-    nonisolated init(
-        url: URL,
-        displayName: String,
-        relativePath: String,
-        byteSize: Int64? = nil,
-        allocatedByteSize: Int64? = nil,
-        modificationDate: Date? = nil,
-        downloadStatus: CloudDownloadStatus = .unknown,
-        evictionResult: EvictionResult? = nil
-    ) {
-        self.id = url
-        self.url = url
-        self.displayName = displayName
-        self.relativePath = relativePath
-        self.byteSize = byteSize
-        self.allocatedByteSize = allocatedByteSize
-        self.modificationDate = modificationDate
-        self.downloadStatus = downloadStatus
-        self.evictionResult = evictionResult
-    }
+    nonisolated var id: URL { url }
 
     /// Bytes physically allocated on this Mac. Older cached scans fall back to
     /// the logical size until the next scan refreshes the value.
     nonisolated var localByteSize: Int64 {
         allocatedByteSize ?? byteSize ?? 0
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case url, displayName, relativePath, byteSize, allocatedByteSize, modificationDate
+        // Key used by snapshots saved before CloudFile became Codable.
+        case downloadStatus = "downloadStatusName"
     }
 }
 
@@ -114,12 +99,30 @@ extension [String: CloudFolderTotal] {
     }
 }
 
-nonisolated enum CloudDownloadStatus: Hashable, Sendable {
+nonisolated enum CloudDownloadStatus: String, Codable, Hashable, Sendable {
     case downloaded
     case notDownloaded
     case current
     case downloading
     case unknown
+
+    nonisolated init(resourceValues values: URLResourceValues) {
+        if values.ubiquitousItemIsDownloading == true {
+            self = .downloading
+            return
+        }
+
+        switch values.ubiquitousItemDownloadingStatus {
+        case .current:
+            self = .current
+        case .downloaded:
+            self = .downloaded
+        case .notDownloaded:
+            self = .notDownloaded
+        default:
+            self = .unknown
+        }
+    }
 
     nonisolated var isStoredLocally: Bool {
         switch self {
@@ -142,26 +145,6 @@ nonisolated enum CloudDownloadStatus: Hashable, Sendable {
             "Загружается"
         case .unknown:
             "Неизвестно"
-        }
-    }
-}
-
-nonisolated enum EvictionResult: Hashable, Sendable {
-    case pending
-    case success
-    case skipped(String)
-    case failure(String)
-
-    nonisolated var displayName: String {
-        switch self {
-        case .pending:
-            "Выгрузка..."
-        case .success:
-            "Выгружен"
-        case .skipped(let reason):
-            "Пропущен: \(reason)"
-        case .failure(let message):
-            "Ошибка: \(message)"
         }
     }
 }

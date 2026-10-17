@@ -36,9 +36,28 @@ enum CloudFileScanner {
         let candidateBatch: [CloudFile]
     }
 
+    /// Asks FileManager about every item; slower than `CloudFileDiskScanner`
+    /// but relies only on the iCloud resource values.
     nonisolated static func scan(
         folderURL: URL,
         onProgress: (@Sendable (ScanProgress) -> Void)? = nil
+    ) async throws -> ScanResult {
+        let task = Task.detached(priority: .userInitiated) {
+            try FileAccess.withSecurityScopedAccess(to: folderURL) {
+                try scanSynchronously(folderURL: folderURL, onProgress: onProgress)
+            }
+        }
+
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
+    nonisolated private static func scanSynchronously(
+        folderURL: URL,
+        onProgress: (@Sendable (ScanProgress) -> Void)?
     ) throws -> ScanResult {
         let resourceKeys: [URLResourceKey] = [
             .isDirectoryKey,
@@ -59,11 +78,16 @@ enum CloudFileScanner {
         let folderPath = folderURL.standardizedFileURL.path(percentEncoded: false)
         let relativePathPrefix = folderPath.hasSuffix("/") ? folderPath : folderPath + "/"
 
-        let didStartAccess = folderURL.startAccessingSecurityScopedResource()
-        defer {
-            if didStartAccess {
-                folderURL.stopAccessingSecurityScopedResource()
-            }
+        func reportProgress() {
+            onProgress?(
+                ScanProgress(
+                    scannedFileCount: scannedFileCount,
+                    candidateFileCount: files.count,
+                    skippedFileCount: skippedFileCount,
+                    candidateBatch: candidateBatch
+                )
+            )
+            candidateBatch = []
         }
 
         guard let enumerator = FileManager.default.enumerator(
@@ -83,8 +107,9 @@ enum CloudFileScanner {
 
             do {
                 let values = try fileURL.resourceValues(forKeys: resourceKeySet)
+                let relativePath = relativePath(for: fileURL, prefix: relativePathPrefix)
                 guard values.isDirectory != true else {
-                    directoryTotals.addSubfolder(relativePath: relativePath(for: fileURL, prefix: relativePathPrefix))
+                    directoryTotals.addSubfolder(relativePath: relativePath)
                     continue
                 }
 
@@ -94,9 +119,9 @@ enum CloudFileScanner {
                     continue
                 }
 
-                let downloadStatus = downloadStatus(from: values)
+                let downloadStatus = CloudDownloadStatus(resourceValues: values)
                 directoryTotals.addFile(
-                    relativePath: relativePath(for: fileURL, prefix: relativePathPrefix),
+                    relativePath: relativePath,
                     byteSize: Int64(values.fileSize ?? 0),
                     isLocal: downloadStatus.isStoredLocally,
                     modificationDate: values.contentModificationDate
@@ -108,41 +133,24 @@ enum CloudFileScanner {
                 let file = CloudFile(
                     url: fileURL,
                     displayName: fileURL.lastPathComponent,
-                    relativePath: relativePath(for: fileURL, prefix: relativePathPrefix),
+                    relativePath: relativePath,
                     byteSize: values.fileSize.map(Int64.init),
-                    allocatedByteSize: allocatedByteSize(from: values),
+                    allocatedByteSize: (values.totalFileAllocatedSize ?? values.fileAllocatedSize).map(Int64.init),
                     modificationDate: values.contentModificationDate,
                     downloadStatus: downloadStatus
                 )
                 files.append(file)
                 candidateBatch.append(file)
-            } catch is CancellationError {
-                throw CancellationError()
             } catch {
                 skippedFileCount += 1
             }
 
             if scannedFileCount.isMultiple(of: 500) || candidateBatch.count >= 100 {
-                onProgress?(
-                    ScanProgress(
-                        scannedFileCount: scannedFileCount,
-                        candidateFileCount: files.count,
-                        skippedFileCount: skippedFileCount,
-                        candidateBatch: candidateBatch
-                    )
-                )
-                candidateBatch = []
+                reportProgress()
             }
         }
 
-        onProgress?(
-            ScanProgress(
-                scannedFileCount: scannedFileCount,
-                candidateFileCount: files.count,
-                skippedFileCount: skippedFileCount,
-                candidateBatch: candidateBatch
-            )
-        )
+        reportProgress()
 
         return ScanResult(
             files: files.sorted(by: sortByLargestSizeFirst),
@@ -161,33 +169,6 @@ enum CloudFileScanner {
         }
 
         return lhs.relativePath.localizedStandardCompare(rhs.relativePath) == .orderedAscending
-    }
-
-    nonisolated private static func allocatedByteSize(from values: URLResourceValues) -> Int64? {
-        if let size = values.totalFileAllocatedSize ?? values.fileAllocatedSize {
-            return Int64(size)
-        }
-
-        return nil
-    }
-
-    nonisolated private static func downloadStatus(from values: URLResourceValues) -> CloudDownloadStatus {
-        if values.ubiquitousItemIsDownloading == true {
-            return .downloading
-        }
-
-        switch values.ubiquitousItemDownloadingStatus {
-        case .current:
-            return .current
-        case .downloaded:
-            return .downloaded
-        case .notDownloaded:
-            return .notDownloaded
-        case nil:
-            return .unknown
-        default:
-            return .unknown
-        }
     }
 
     nonisolated private static func relativePath(for fileURL: URL, prefix: String) -> String {

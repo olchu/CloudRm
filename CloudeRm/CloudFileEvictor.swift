@@ -28,42 +28,19 @@ enum CloudFileEvictor {
         }
     }
 
-    nonisolated static func evict(_ file: CloudFile, accessFolderURL: URL?) -> EvictionResult {
-        do {
-            if let accessFolderURL {
-                try FileAccess.withSecurityScopedAccess(to: accessFolderURL) {
+    /// Evicts each file's local copy and returns the error message for every
+    /// file that could not be evicted, keyed by file ID.
+    nonisolated static func evict(_ files: [CloudFile], accessFolderURL: URL?) -> [CloudFile.ID: String] {
+        FileAccess.withSecurityScopedAccess(to: accessFolderURL) {
+            var failures: [CloudFile.ID: String] = [:]
+            for file in files {
+                do {
                     try evictValidatedFile(at: file.url)
-                }
-            } else {
-                try evictValidatedFile(at: file.url)
-            }
-
-            return .success
-        } catch {
-            return .failure(error.localizedDescription)
-        }
-    }
-
-    nonisolated static func evict(_ files: [CloudFile], accessFolderURL: URL?) -> [(CloudFile.ID, EvictionResult)] {
-        if let accessFolderURL {
-            return FileAccess.withSecurityScopedAccess(to: accessFolderURL) {
-                files.map { file in
-                    (file.id, evictionResult(for: file.url))
+                } catch {
+                    failures[file.id] = error.localizedDescription
                 }
             }
-        }
-
-        return files.map { file in
-            (file.id, evictionResult(for: file.url))
-        }
-    }
-
-    nonisolated private static func evictionResult(for fileURL: URL) -> EvictionResult {
-        do {
-            try evictValidatedFile(at: fileURL)
-            return .success
-        } catch {
-            return .failure(error.localizedDescription)
+            return failures
         }
     }
 
@@ -95,27 +72,5 @@ enum CloudFileEvictor {
         }
 
         try FileManager.default.evictUbiquitousItem(at: fileURL)
-    }
-}
-
-private extension CloudDownloadStatus {
-    nonisolated init(resourceValues values: URLResourceValues) {
-        if values.ubiquitousItemIsDownloading == true {
-            self = .downloading
-            return
-        }
-
-        switch values.ubiquitousItemDownloadingStatus {
-        case .current:
-            self = .current
-        case .downloaded:
-            self = .downloaded
-        case .notDownloaded:
-            self = .notDownloaded
-        case nil:
-            self = .unknown
-        default:
-            self = .unknown
-        }
     }
 }
