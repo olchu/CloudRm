@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Renders the README images into docs/images:
 #   hero.png                - banner with the app icon
+#   social-preview.jpg      - 1280x640 banner for GitHub's social preview
 #   screenshot-overview.png - main window with sample data
 #   screenshot-folder.png   - an open folder while local copies are removed
 #

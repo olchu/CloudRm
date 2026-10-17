@@ -69,6 +69,13 @@ struct RenderReadmeImages {
 
             // The banner's soft gradients compress poorly, so it gets a lower scale.
             try save(HeroBanner(icon: icon), to: outputURL.appending(path: "hero.png"), scale: 1.5)
+
+            // GitHub's social preview: 1280x640 and under 1 MB.
+            try save(
+                HeroBanner(icon: icon, height: 640, cornerRadius: 0),
+                to: outputURL.appending(path: "social-preview.jpg"),
+                scale: 1
+            )
         } catch {
             print("error: \(error)")
             exit(1)
@@ -122,7 +129,9 @@ struct RenderReadmeImages {
         renderer.scale = scale
         guard
             let cgImage = renderer.cgImage,
-            let data = NSBitmapImageRep(cgImage: cgImage).representation(using: .png, properties: [:])
+            let data = url.pathExtension == "jpg"
+                ? NSBitmapImageRep(cgImage: cgImage).representation(using: .jpeg, properties: [.compressionFactor: 0.9])
+                : NSBitmapImageRep(cgImage: cgImage).representation(using: .png, properties: [:])
         else {
             throw CocoaError(.fileWriteUnknown)
         }
@@ -157,6 +166,8 @@ private struct WindowFrame: View {
 
 private struct HeroBanner: View {
     let icon: NSImage
+    var height: CGFloat = 420
+    var cornerRadius: CGFloat = 28
 
     var body: some View {
         HStack(spacing: 44) {
@@ -185,7 +196,7 @@ private struct HeroBanner: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 72)
-        .frame(width: 1280, height: 420)
+        .frame(width: 1280, height: height)
         .background(
             LinearGradient(
                 colors: [
@@ -203,7 +214,7 @@ private struct HeroBanner: View {
                 .blur(radius: 90)
                 .offset(x: 140, y: -180)
         }
-        .clipShape(.rect(cornerRadius: 28))
+        .clipShape(.rect(cornerRadius: cornerRadius))
     }
 
     private func badge(_ title: String) -> some View {
